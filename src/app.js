@@ -6,6 +6,7 @@ const morgan = require("morgan");
 const healthRoutes = require("./routes/health.routes");
 const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/user.routes");
+const routeRoutes = require("./routes/route.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 
@@ -42,6 +43,11 @@ app.use(
 app.use(
     "/api/users",
     userRoutes
+);
+
+app.use(
+    "/api/routes",
+    routeRoutes
 );
 
 
