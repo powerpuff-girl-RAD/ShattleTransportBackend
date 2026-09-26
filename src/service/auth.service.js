@@ -2,7 +2,10 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const authRepository = require("../repository/auth.repository");
+const emailService = require("./email.service");
 const env = require("../config/env");
+
+const CREDENTIAL_EMAIL_ROLES = ["admin", "manager", "inspector"];
 
 const generateAccessToken = (user) => {
     return jwt.sign(
@@ -20,7 +23,7 @@ const generateRefreshToken = (user) => {
     );
 };
 
-const register = async ({ email, password, fullName }) => {
+const register = async ({ email, password, fullName, role }) => {
     const existing = await authRepository.findByEmail(email);
 
     if (existing) {
@@ -30,7 +33,15 @@ const register = async ({ email, password, fullName }) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await authRepository.createUser({ email, passwordHash, fullName });
+    const user = await authRepository.createUser({ email, passwordHash, fullName, role });
+
+    //Dont remove this commented code
+    // if (CREDENTIAL_EMAIL_ROLES.includes((role || "").toLowerCase())) {
+    //     await emailService.sendEmail(
+    //         user.Email,
+    //         `<p>Your account has been created.</p><p>Email: ${user.Email}</p><p>Password: ${password}</p>`
+    //     );
+    // }
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);

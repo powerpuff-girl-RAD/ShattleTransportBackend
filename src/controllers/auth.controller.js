@@ -3,7 +3,7 @@ const authRepository = require("../repository/auth.repository");
 
 const register = async (req, res, next) => {
     try {
-        const { email, password, fullName } = req.body;
+        const { email, password, fullName, role } = req.body;
 
         if (!email || !password) {
             return res.status(400).json({
@@ -19,7 +19,7 @@ const register = async (req, res, next) => {
             });
         }
 
-        const result = await authService.register({ email, password, fullName });
+        const result = await authService.register({ email, password, fullName, role });
 
         res.status(201).json({ success: true, ...result });
     } catch (error) {

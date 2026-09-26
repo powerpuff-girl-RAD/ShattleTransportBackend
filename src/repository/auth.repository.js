@@ -20,13 +20,14 @@ const findById = async (id) => {
     return result.recordset[0];
 };
 
-const createUser = async ({ email, passwordHash, fullName }) => {
+const createUser = async ({ email, passwordHash, fullName, role }) => {
     const pool = await getPool();
 
     const result = await pool.request()
         .input("Email", sql.NVarChar, email)
         .input("PasswordHash", sql.NVarChar, passwordHash)
         .input("FullName", sql.NVarChar, fullName || null)
+        .input("Role", sql.NVarChar, role || null)
         .execute("sp_CreateUser");
 
     return result.recordset[0];
