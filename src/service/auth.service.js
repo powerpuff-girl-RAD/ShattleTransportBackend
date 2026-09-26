@@ -2,7 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const authRepository = require("../repository/auth.repository");
-const emailService = require("./email.service");
+//const emailService = require("./email.service");
 const env = require("../config/env");
 
 const CREDENTIAL_EMAIL_ROLES = ["admin", "manager", "inspector"];
