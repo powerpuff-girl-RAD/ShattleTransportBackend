@@ -7,6 +7,8 @@ const healthRoutes = require("./routes/health.routes");
 const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/user.routes");
 const routeRoutes = require("./routes/route.routes");
+const vehicleRoutes = require("./routes/vehicle.routes");
+const scheduleRoutes = require("./routes/schedule.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 
@@ -48,6 +50,16 @@ app.use(
 app.use(
     "/api/routes",
     routeRoutes
+);
+
+app.use(
+    "/api/vehicles",
+    vehicleRoutes
+);
+
+app.use(
+    "/api/schedules",
+    scheduleRoutes
 );
 
 
