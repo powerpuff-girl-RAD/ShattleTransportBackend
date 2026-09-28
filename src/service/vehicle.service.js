@@ -7,12 +7,12 @@ const getAllVehicles = async () => {
 };
 
 
-const createVehicle = async ({ depot, name, status, type, vehicleId }) => {
+const createVehicle = async ({ depot, name, status, type, vehicleId, seat }) => {
 
-    if (!depot || !name || !status || !type || !vehicleId) {
+    if (!depot || !name || !status || !type || !vehicleId || !seat) {
 
         const error = new Error(
-            "Depot, Name, Status, Type and VehicleId are required"
+            "Depot, Name, Status, Type, VehicleId and Seat are required"
         );
 
         error.statusCode = 400;
@@ -25,17 +25,18 @@ const createVehicle = async ({ depot, name, status, type, vehicleId }) => {
         name,
         status,
         type,
-        vehicleId
+        vehicleId,
+        seat
     });
 };
 
 
-const updateVehicle = async (id, { depot, name, status, type, vehicleId }) => {
+const updateVehicle = async (id, { depot, name, status, type, vehicleId, seats }) => {
 
-    if (!depot || !name || !status || !type || !vehicleId) {
+    if (!depot || !name || !status || !type || !vehicleId || !seats) {
 
         const error = new Error(
-            "Depot, Name, Status, Type and VehicleId are required"
+            "Depot, Name, Status, Type, VehicleId and Seat are required"
         );
 
         error.statusCode = 400;
@@ -48,7 +49,8 @@ const updateVehicle = async (id, { depot, name, status, type, vehicleId }) => {
         name,
         status,
         type,
-        vehicleId
+        vehicleId,
+        seats
     });
 
     if (!vehicle) {

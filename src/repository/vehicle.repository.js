@@ -19,7 +19,7 @@ const getVehicle = async (id) => {
 };
 
 
-const create = async ({ depot, name, status, type, vehicleId }) => {
+const create = async ({ depot, name, status, type, vehicleId, seat }) => {
 
     const pool = await getPool();
 
@@ -30,13 +30,14 @@ const create = async ({ depot, name, status, type, vehicleId }) => {
         .input("Status", sql.NVarChar(10), status)
         .input("Type", sql.Int, type)
         .input("VehicleId", sql.NVarChar(50), vehicleId)
+        .input("Seat", sql.Int, seat)
         .execute("sp_Vehicles_Create");
 
     return getbyId(result.recordset[0].Id);
 };
 
 
-const update = async (id, { depot, name, status, type, vehicleId }) => {
+const update = async (id, { depot, name, status, type, vehicleId, seats }) => {
 
     const pool = await getPool();
 
@@ -48,6 +49,7 @@ const update = async (id, { depot, name, status, type, vehicleId }) => {
         .input("Status", sql.NVarChar(10), status)
         .input("Type", sql.Int, type)
         .input("VehicleId", sql.NVarChar(50), vehicleId)
+        .input("Seat", sql.Int, seats)
         .execute("sp_Vehicles_Update");
 
     return getbyId(id);
