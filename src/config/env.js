@@ -10,7 +10,9 @@ module.exports = {
         accessSecret: process.env.JWT_ACCESS_SECRET,
         refreshSecret: process.env.JWT_REFRESH_SECRET,
         accessExpiry: process.env.ACCESS_TOKEN_EXPIRY || "15m",
-        refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || "7d"
+        refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || "7d",
+        qrSecret: process.env.JWT_QR_SECRET || process.env.JWT_ACCESS_SECRET, // dedicated secret preferred
+        qrExpiry: process.env.QR_TOKEN_EXPIRY || "5m",
     },
 
     gmail: {

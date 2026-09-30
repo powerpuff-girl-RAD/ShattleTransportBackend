@@ -9,6 +9,8 @@ const userRoutes = require("./routes/user.routes");
 const routeRoutes = require("./routes/route.routes");
 const vehicleRoutes = require("./routes/vehicle.routes");
 const scheduleRoutes = require("./routes/schedule.routes");
+const passengerRoutes = require("./routes/passenger.routes");
+const tokenRoutes = require("./routes/token.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 
@@ -62,8 +64,17 @@ app.use(
     scheduleRoutes
 );
 
+app.use(
+    "/api/passenger",
+    passengerRoutes
+);
 
-// 404
+app.use(
+    "/api/passenger/token",
+    tokenRoutes
+);
+
+
 app.use((req, res) => {
 
     res.status(404).json({
