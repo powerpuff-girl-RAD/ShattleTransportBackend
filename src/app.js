@@ -9,6 +9,7 @@ const userRoutes = require("./routes/user.routes");
 const routeRoutes = require("./routes/route.routes");
 const vehicleRoutes = require("./routes/vehicle.routes");
 const scheduleRoutes = require("./routes/schedule.routes");
+const fareRoutes = require("./routes/fare.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 
@@ -60,6 +61,11 @@ app.use(
 app.use(
     "/api/schedules",
     scheduleRoutes
+);
+
+app.use(
+    "/api/fare",
+    fareRoutes
 );
 
 
