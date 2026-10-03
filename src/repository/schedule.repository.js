@@ -36,7 +36,19 @@ const create = async ({ date, startTime, endTime, routeId, vehicleId, inspectorI
         .input("Status", sql.NVarChar(20), status)
         .execute("sp_VehicleSchedules_Create");
 
-    return getbyId(result.recordset[0].Id);
+    return result.recordset[0].AssignmentId;
+};
+
+const saveQrCode = async (id, qrCode) => {
+
+    const pool = await getPool();
+    await pool
+        .request()
+        .input("Id", sql.BigInt, id)
+        .input("QrCode", sql.NVarChar(sql.MAX), qrCode)
+        .execute("sp_VehicleSchedules_SaveQrCode");
+
+    return getbyId(id);
 };
 
 
@@ -78,6 +90,7 @@ module.exports = {
     getAll,
     getbyId,
     create,
+    saveQrCode,
     update,
     remove
 };
