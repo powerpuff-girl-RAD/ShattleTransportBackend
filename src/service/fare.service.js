@@ -1,20 +1,7 @@
 const fareRepository = require("../repository/fare.repository");
-
-const badRequest = (message) => {
-    const error = new Error(message);
-    error.statusCode = 400;
-    return error;
-};
-
-const validateRouteId = (routeId) => {
-    const parsedRouteId = Number(routeId);
-
-    if (!Number.isInteger(parsedRouteId) || parsedRouteId <= 0) {
-        throw badRequest("routeId is required and must be a positive integer");
-    }
-
-    return parsedRouteId;
-};
+const fareStrategies = require("./fare/strategies");
+const { badRequest, notFound } = require("../utils/errors");
+const { validateRouteId } = require("../utils/validators");
 
 const validateFare = (data) => {
     const { routeId, minkm, maxkm, standardFare, offPeakFare } = data;
@@ -50,134 +37,22 @@ const validateFare = (data) => {
     };
 };
 
-const requiredText = (value, field) => {
-    if (typeof value !== "string" || value.trim() === "") {
-        throw badRequest(`${field} is required and must be a non-empty string`);
-    }
-
-    return value.trim();
-};
-
-const requiredAmount = (value, field) => {
-    if (value === undefined || value === null || value === "" || !Number.isFinite(Number(value)) || Number(value) < 0) {
-        throw badRequest(`${field} is required and must be a non-negative number`);
-    }
-
-    return Number(value);
-};
-
-const splitRange = (value, field) => {
-    const parts = requiredText(value, field).split(/\s*[-\u2013\u2014]\s*/);
-
-    if (parts.length !== 2 || parts.some((part) => part === "")) {
-        throw badRequest(`${field} must contain a start and end value`);
-    }
-
-    return parts;
-};
-
 const validateFareBundle = (data) => {
     const routeId = validateRouteId(data.routeId);
-    const collectionNames = ["distanceFare", "flatFares", "timeBasedFares", "passes"];
 
-    for (const collectionName of collectionNames) {
-        if (!Array.isArray(data[collectionName])) {
-            throw badRequest(`${collectionName} must be an array`);
+    for (const { collection } of fareStrategies) {
+        if (!Array.isArray(data[collection])) {
+            throw badRequest(`${collection} must be an array`);
         }
     }
 
-    const distanceFare = data.distanceFare.map((fare, index) => {
-        const field = `distanceFare[${index}]`;
-        const minkm = requiredAmount(fare.Minkm, `${field}.Minkm`);
-        const maxkm = requiredAmount(fare.Maxkm, `${field}.Maxkm`);
+    const bundle = { routeId };
 
-        if (maxkm !== 0 && maxkm <= minkm) {
-            throw badRequest(`${field}.Maxkm must be greater than Minkm, or 0 for no upper limit`);
-        }
+    for (const strategy of fareStrategies) {
+        bundle[strategy.collection] = strategy.validate(data[strategy.collection], { routeId });
+    }
 
-        return {
-            minkm,
-            maxkm,
-            standardFare: requiredAmount(fare.StandardFare, `${field}.StandardFare`),
-            offPeakFare: requiredAmount(fare.OffPeakFare, `${field}.OffPeakFare`)
-        };
-    });
-
-    const flatFares = data.flatFares.map((fare, index) => {
-        const field = `flatFares[${index}]`;
-
-        if (fare.RouteId !== undefined && validateRouteId(fare.RouteId) !== routeId) {
-            throw badRequest(`${field}.RouteId must match routeId`);
-        }
-
-        return {
-            passengerType: requiredText(fare.PassengerType, `${field}.PassengerType`),
-            passengerDescription: requiredText(fare.PassengerDescription, `${field}.PassengerDescription`),
-            local: requiredAmount(fare.Local, `${field}.Local`),
-            express: requiredAmount(fare.Express, `${field}.Express`),
-            rule: requiredText(fare.Rule, `${field}.Rule`),
-            status: requiredText(fare.Status, `${field}.Status`)
-        };
-    });
-
-    const timeBasedFares = data.timeBasedFares.map((fare, index) => {
-        const field = `timeBasedFares[${index}]`;
-        const [startWindow, endWindow] = splitRange(fare.window, `${field}.window`);
-        const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-
-        if (!timePattern.test(startWindow) || !timePattern.test(endWindow)) {
-            throw badRequest(`${field}.window must use 24-hour HH:mm values`);
-        }
-
-        const applies = requiredText(fare.applies, `${field}.applies`).toUpperCase();
-        let appliesFrom;
-        let appliesTo;
-
-        if (applies === "ALL DAYS") {
-            appliesFrom = "ALL";
-            appliesTo = "ALL";
-        } else {
-            [appliesFrom, appliesTo] = splitRange(applies, `${field}.applies`);
-
-            if (!/^[A-Z]{3}$/.test(appliesFrom) || !/^[A-Z]{3}$/.test(appliesTo)) {
-                throw badRequest(`${field}.applies must be a weekday range or ALL DAYS`);
-            }
-        }
-
-        return {
-            period: requiredText(fare.period, `${field}.period`),
-            startWindow,
-            endWindow,
-            appliesFrom,
-            appliesTo,
-            fareRule: requiredText(fare.rule, `${field}.rule`),
-            status: requiredText(fare.status, `${field}.status`)
-        };
-    });
-
-    const passes = data.passes.map((pass, index) => {
-        const field = `passes[${index}]`;
-        const validity = Number(pass.Validity);
-
-        if (!Number.isInteger(validity) || validity <= 0) {
-            throw badRequest(`${field}.Validity must be a positive integer`);
-        }
-
-        if (typeof pass.IsOn !== "boolean") {
-            throw badRequest(`${field}.IsOn must be a boolean`);
-        }
-
-        return {
-            passProduct: requiredText(pass.PassProduct, `${field}.PassProduct`),
-            tagline: requiredText(pass.Tagline, `${field}.Tagline`),
-            price: requiredAmount(pass.Price, `${field}.Price`),
-            validity,
-            usageCondition: requiredText(pass.UsageCondition, `${field}.UsageCondition`),
-            isOn: pass.IsOn
-        };
-    });
-
-    return { routeId, distanceFare, flatFares, timeBasedFares, passes };
+    return bundle;
 };
 
 const getAll = async (routeId) => {
@@ -200,9 +75,7 @@ const update = async (id, data) => {
     const fare = await fareRepository.update(String(id), validateFare(data));
 
     if (!fare) {
-        const error = new Error("Fare not found");
-        error.statusCode = 404;
-        throw error;
+        throw notFound("Fare not found");
     }
 
     return fare;

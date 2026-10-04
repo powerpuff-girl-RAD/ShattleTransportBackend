@@ -1,25 +1,6 @@
-const QRCode = require("qrcode");
 const scheduleRepository = require("../repository/schedule.repository");
-
-
-// QR encodes human-readable text; names come from the stored schedule row
-const buildQrCode = async (scheduleId, { date, startTime, endTime, status }) => {
-
-    const [row] = await scheduleRepository.getbyId(scheduleId);
-
-    const text = [
-        "SHATTLE TRIP",
-        `Schedule #: ${scheduleId}`,
-        `Route: ${row?.RouteName ?? "-"}`,
-        `Vehicle: ${row?.VehicleName ?? "-"}`,
-        `Inspector: ${row?.Inspector || "-"}`,
-        `Date: ${date}`,
-        `Time: ${startTime} - ${endTime}`,
-        `Status: ${status}`
-    ].join("\n");
-
-    return QRCode.toDataURL(text);
-};
+const scheduleFacade = require("./schedule.facade");
+const { notFound } = require("../utils/errors");
 
 
 const getAllSchedules = async () => {
@@ -33,83 +14,22 @@ const getScheduleById = async (id) => {
 
     if (!schedule || schedule.length === 0) {
 
-        const error = new Error("Schedule not found");
-
-        error.statusCode = 404;
-
-        throw error;
+        throw notFound("Schedule not found");
     }
 
     return schedule[0];
 };
 
 // ASSIGN (create)
-const assignSchedule = async ({ date, startTime, endTime, routeId, vehicleId, inspectorId, status }) => {
+const assignSchedule = async (data) => {
 
-    if (!date || !startTime || !endTime || !routeId || !vehicleId || !inspectorId || !status) {
-
-        const error = new Error(
-            "Date, StartTime, EndTime, RouteId, VehicleId, InspectorId and Status are required"
-        );
-
-        error.statusCode = 400;
-
-        throw error;
-    }
-
-    const scheduleId = await scheduleRepository.create({
-        date,
-        startTime,
-        endTime,
-        routeId,
-        vehicleId,
-        inspectorId,
-        status
-    });
-
-    const qrCode = await buildQrCode(scheduleId, { date, startTime, endTime, status });
-
-    return await scheduleRepository.saveQrCode(scheduleId, qrCode);
+    return await scheduleFacade.assign(data);
 };
 
+const updateSchedule = async (id, data) => {
 
-const updateSchedule = async (id, { date, startTime, endTime, routeId, vehicleId, inspectorId, status }) => {
-
-    if (!date || !startTime || !endTime || !routeId || !vehicleId || !inspectorId || !status) {
-
-        const error = new Error(
-            "Date, StartTime, EndTime, RouteId, VehicleId, InspectorId and Status are required"
-        );
-
-        error.statusCode = 400;
-
-        throw error;
-    }
-
-    const schedule = await scheduleRepository.update(id, {
-        date,
-        startTime,
-        endTime,
-        routeId,
-        vehicleId,
-        inspectorId,
-        status
-    });
-
-    if (!schedule || schedule.length === 0) {
-
-        const error = new Error("Schedule not found");
-
-        error.statusCode = 404;
-
-        throw error;
-    }
-
-    const qrCode = await buildQrCode(id, { date, startTime, endTime, status });
-
-    return await scheduleRepository.saveQrCode(id, qrCode);
+    return await scheduleFacade.update(id, data);
 };
-
 
 const removeSchedule = async (id) => {
 
@@ -117,11 +37,7 @@ const removeSchedule = async (id) => {
 
     if (!schedule) {
 
-        const error = new Error("Schedule not found");
-
-        error.statusCode = 404;
-
-        throw error;
+        throw notFound("Schedule not found");
     }
 };
 
