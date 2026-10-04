@@ -1,4 +1,4 @@
-const passengerService = require('../service/passenger.service');
+﻿const passengerService = require('../service/passenger.service');
 
 // ─── Profile ──────────────────────────────────────────────────────────────
 
@@ -57,6 +57,68 @@ const changePassword = async (req, res, next) => {
     }
 };
 
+// ─── Top-Up ───────────────────────────────────────────────────────────────
+
+const topUpAccount = async (req, res, next) => {
+    try {
+        const {
+            amount,
+            paymentMethod,
+            cardNumber,
+            expiry,
+            cvv,
+            cardholderName,
+        } = req.body;
+
+        const result = await passengerService.topUpAccount(req.user.id, {
+            amount,
+            paymentMethod,
+            cardNumber,
+            expiry,
+            cvv,
+            cardholderName,
+        });
+
+        res.status(200).json({
+            success:         true,
+            message:         'Top-up successful',
+            transaction:     result.transaction,
+            previousBalance: result.previousBalance,
+            newBalance:      result.newBalance,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const getTopUpHistory = async (req, res, next) => {
+    try {
+        const limit = parseInt(req.query.limit, 10) || 20;
+        const history = await passengerService.getTopUpHistory(req.user.id, limit);
+
+        res.status(200).json({
+            success: true,
+            history,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const getTopUpByRef = async (req, res, next) => {
+    try {
+        const { ref } = req.params;
+        const receipt = await passengerService.getTopUpByRef(req.user.id, ref);
+
+        res.status(200).json({
+            success: true,
+            receipt,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 /** Normalises the raw DB row into a clean API response shape. */
@@ -83,5 +145,7 @@ module.exports = {
     getProfile,
     updateProfile,
     changePassword,
+    topUpAccount,
+    getTopUpHistory,
+    getTopUpByRef,
 };
-

@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 
 const { authenticateToken } = require('../middleware/auth.middleware');
@@ -12,5 +12,9 @@ router.get('/profile', authenticateToken, passengerController.getProfile);
 router.put('/profile', authenticateToken, passengerController.updateProfile);
 router.put('/password', authenticateToken, passengerController.changePassword);
 
-module.exports = router;
+// Top-Up & Wallet
+router.post('/topup', authenticateToken, passengerController.topUpAccount);
+router.get('/topup/history', authenticateToken, passengerController.getTopUpHistory);
+router.get('/topup/:ref', authenticateToken, passengerController.getTopUpByRef);
 
+module.exports = router;
