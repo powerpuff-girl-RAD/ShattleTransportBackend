@@ -1,45 +1,34 @@
-const { sql, getPool } = require("../config/database");
+const { getCollection, nextId, EMAIL_COLLATION, NO_ID } = require("../config/database");
+
+const users = () => getCollection("users");
 
 const findByEmail = async (email) => {
-    const pool = await getPool();
-
-    const result = await pool.request()
-        .input("Email", sql.NVarChar, email)
-        .execute("sp_FindUserByEmail");
-
-    return result.recordset[0];
+    return (await users()).findOne({ Email: email, Deleted: { $ne: 1 } }, { ...NO_ID, collation: EMAIL_COLLATION });
 };
 
 const findById = async (id) => {
-    const pool = await getPool();
-
-    const result = await pool.request()
-        .input("Id", sql.Int, id)
-        .execute("sp_FindUserById");
-
-    return result.recordset[0];
+    return (await users()).findOne({ Id: Number(id), Deleted: { $ne: 1 } }, NO_ID);
 };
 
 const createUser = async ({ email, passwordHash, fullName, role }) => {
-    const pool = await getPool();
+    const user = {
+        Id: await nextId("users"),
+        Email: email,
+        PasswordHash: passwordHash,
+        FullName: fullName || null,
+        Role: role || null,
+        Status: "Active",
+        RefreshToken: null,
+        CreatedAt: new Date()
+    };
 
-    const result = await pool.request()
-        .input("Email", sql.NVarChar, email)
-        .input("PasswordHash", sql.NVarChar, passwordHash)
-        .input("FullName", sql.NVarChar, fullName || null)
-        .input("Role", sql.NVarChar, role || null)
-        .execute("sp_CreateUser");
+    await (await users()).insertOne({ ...user });
 
-    return result.recordset[0];
+    return user;
 };
 
 const updateRefreshToken = async (id, refreshToken) => {
-    const pool = await getPool();
-
-    await pool.request()
-        .input("Id", sql.Int, id)
-        .input("RefreshToken", sql.NVarChar, refreshToken)
-        .execute("sp_UpdateRefreshToken");
+    await (await users()).updateOne({ Id: Number(id) }, { $set: { RefreshToken: refreshToken } });
 };
 
 module.exports = {

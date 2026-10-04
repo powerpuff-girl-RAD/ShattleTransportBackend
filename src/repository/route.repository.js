@@ -1,134 +1,110 @@
-const { sql, getPool } = require("../config/database");
+const { getCollection, nextId, NO_ID } = require("../config/database");
+
+const routes = () => getCollection("routes");
+
+// Flattens a route document into one row per stop (the shape the route builder expects)
+const toRows = (route) => {
+    const stops = [...(route.stops || [])].sort((a, b) => a.StopOrder - b.StopOrder);
+
+    return stops.map((stop) => ({
+        RouteId: route.Id,
+        RouteNumber: route.RouteNumber,
+        RouteName: route.RouteName,
+        StartLocation: route.StartLocation,
+        EndLocation: route.EndLocation,
+        RouteDistanceKm: route.DistanceKm,
+        CurrentStatus: route.CurrentStatus,
+        StopId: stop.Id,
+        StopName: stop.StopName,
+        StopOrder: stop.StopOrder,
+        DistanceFromStartKm: stop.DistanceFromStartKm
+    }));
+};
+
+const buildStops = async (stops) => {
+    const built = [];
+
+    for (const stop of stops) {
+        built.push({
+            Id: await nextId("routeStops"),
+            StopName: stop.stopName,
+            StopOrder: Number(stop.stopOrder),
+            DistanceFromStartKm: Number(stop.distanceFromStartKm)
+        });
+    }
+
+    return built;
+};
+
+const toSummary = ({ stops, ...route }) => route;
 
 
 // GET ALL (flat rows, one per route/stop pair)
 const getAll = async () => {
 
-    const pool = await getPool();
+    const docs = await (await routes()).find({ Deleted: { $ne: 1 } }, NO_ID).sort({ Id: 1 }).toArray();
 
-    const result = await pool
-        .request()
-        .execute("SPR_Routes");
-
-    return result.recordset;
+    return docs.flatMap(toRows);
 };
 
 const getByRouteId = async (routeId) => {
 
-    const pool = await getPool();
+    const doc = await (await routes()).findOne({ Id: Number(routeId), Deleted: { $ne: 1 } }, NO_ID);
 
-    const result = await pool
-        .request()
-        .input("RouteId", sql.BigInt, routeId)
-        .execute("SPR_Routes");
-
-    return result.recordset;
+    return doc ? toRows(doc) : [];
 };
 
-// CREATE (route + stops in one transaction)
+// CREATE (route and stops live in one document, so the write is atomic)
 const create = async ({ routeNumber, routeName, startLocation, endLocation, distanceKm, stops }) => {
 
-    const pool = await getPool();
+    const route = {
+        Id: await nextId("routes"),
+        RouteNumber: routeNumber,
+        RouteName: routeName,
+        StartLocation: startLocation,
+        EndLocation: endLocation,
+        DistanceKm: Number(distanceKm),
+        CurrentStatus: true,
+        stops: await buildStops(stops),
+        CreatedAt: new Date()
+    };
 
-    const transaction = new sql.Transaction(pool);
+    await (await routes()).insertOne({ ...route });
 
-    await transaction.begin();
-
-    try {
-
-        const routeResult = await new sql.Request(transaction)
-            .input("RouteNumber", sql.NVarChar(50), routeNumber)
-            .input("RouteName", sql.NVarChar(100), routeName)
-            .input("StartLocation", sql.NVarChar(200), startLocation)
-            .input("EndLocation", sql.NVarChar(200), endLocation)
-            .input("DistanceKm", sql.Decimal(10, 2), distanceKm)
-            .execute("sp_Routes_Create");
-
-        const route = routeResult.recordset[0];
-
-        for (const stop of stops) {
-
-            await new sql.Request(transaction)
-                .input("RouteId", sql.Int, route.Id)
-                .input("StopName", sql.NVarChar(200), stop.stopName)
-                .input("StopOrder", sql.Int, stop.stopOrder)
-                .input("DistanceFromStartKm", sql.Decimal(10, 2), stop.distanceFromStartKm)
-                .execute("sp_RouteStops_Create");
-        }
-
-        await transaction.commit();
-
-        return route;
-
-    } catch (error) {
-
-        await transaction.rollback();
-
-        throw error;
-    }
+    return toSummary(route);
 };
 
 
-// UPDATE (route fields + replaces stops in one transaction)
+// UPDATE (route fields + replaces stops)
 const update = async (id, { routeNumber, routeName, startLocation, endLocation, distanceKm, stops }) => {
 
-    const pool = await getPool();
-
-    const transaction = new sql.Transaction(pool);
-
-    await transaction.begin();
-
-    try {
-
-        const routeResult = await new sql.Request(transaction)
-            .input("Id", sql.Int, id)
-            .input("RouteNumber", sql.NVarChar(50), routeNumber)
-            .input("RouteName", sql.NVarChar(100), routeName)
-            .input("StartLocation", sql.NVarChar(200), startLocation)
-            .input("EndLocation", sql.NVarChar(200), endLocation)
-            .input("DistanceKm", sql.Decimal(10, 2), distanceKm)
-            .execute("sp_Routes_Update");
-
-        const route = routeResult.recordset[0] || null;
-
-        if (!route) {
-            await transaction.rollback();
-            return null;
+    const result = await (await routes()).updateOne(
+        { Id: Number(id), Deleted: { $ne: 1 } },
+        {
+            $set: {
+                RouteNumber: routeNumber,
+                RouteName: routeName,
+                StartLocation: startLocation,
+                EndLocation: endLocation,
+                DistanceKm: Number(distanceKm),
+                stops: await buildStops(stops)
+            }
         }
-        await new sql.Request(transaction)
-            .input(
-                "RouteId",
-                sql.Int,
-                id
-            )
-            .input(
-                "Stops",
-                sql.NVarChar(sql.MAX),
-                JSON.stringify(stops)
-            )
-            .execute("sp_RouteStops_Sync");
-        await transaction.commit();
-        return getByRouteId(id);
+    );
 
-    } catch (error) {
-
-        await transaction.rollback();
-
-        throw error;
+    if (result.matchedCount === 0) {
+        return null;
     }
+
+    return getByRouteId(id);
 };
 
 
 // UPDATE STATUS ONLY
 const updateStatus = async (id, currentStatus) => {
 
-    const pool = await getPool();
+    await (await routes()).updateOne({ Id: Number(id), Deleted: { $ne: 1 } }, { $set: { CurrentStatus: currentStatus } });
 
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .input("CurrentStatus", sql.Bit, currentStatus)
-        .execute("sp_Routes_UpdateStatus");
     return getByRouteId(id);
 };
 

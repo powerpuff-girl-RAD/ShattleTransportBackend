@@ -9,6 +9,9 @@ const userRoutes = require("./routes/user.routes");
 const routeRoutes = require("./routes/route.routes");
 const vehicleRoutes = require("./routes/vehicle.routes");
 const scheduleRoutes = require("./routes/schedule.routes");
+const fareRoutes = require("./routes/fare.routes");
+const passengerRoutes = require("./routes/passenger.routes");
+const tokenRoutes = require("./routes/token.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 

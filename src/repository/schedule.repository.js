@@ -1,5 +1,6 @@
-const { sql, getPool } = require("../config/database");
+const { getCollection, nextId, NO_ID } = require("../config/database");
 
+const schedules = () => getCollection("schedules");
 
 const getAll = async () => {
     return getSchedule(-1);
@@ -9,65 +10,65 @@ const getbyId = async (id) => {
     return getSchedule(id);
 };
 
+// id -1 returns every schedule; route, vehicle and inspector names are joined in
 const getSchedule = async (id) => {
-    const pool = await getPool();
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .execute("sp_Schedules_Get");
-    return result.recordset;
+
+    const match = Number(id) === -1 ? { Deleted: { $ne: 1 } } : { Id: Number(id), Deleted: { $ne: 1 } };
+
+    return (await schedules()).aggregate([
+        { $match: match },
+        { $sort: { Id: 1 } },
+        { $lookup: { from: "routes", localField: "RouteId", foreignField: "Id", as: "route" } },
+        { $lookup: { from: "vehicles", localField: "VehicleId", foreignField: "Id", as: "vehicle" } },
+        { $lookup: { from: "users", localField: "InspectorId", foreignField: "Id", as: "inspector" } },
+        {
+            $addFields: {
+                RouteName: { $first: "$route.RouteName" },
+                VehicleName: { $first: "$vehicle.Name" },
+                Inspector: { $first: "$inspector.FullName" }
+            }
+        },
+        { $project: { _id: 0, route: 0, vehicle: 0, inspector: 0 } }
+    ]).toArray();
 };
+
+const toDocument = ({ date, startTime, endTime, routeId, vehicleId, inspectorId, status }) => ({
+    Date: date,
+    StartTime: startTime,
+    EndTime: endTime,
+    RouteId: Number(routeId),
+    VehicleId: Number(vehicleId),
+    InspectorId: Number(inspectorId),
+    Status: status
+});
 
 
 // CREATE (assign a schedule)
-const create = async ({ date, startTime, endTime, routeId, vehicleId, inspectorId, status }) => {
+const create = async (data) => {
 
-    const pool = await getPool();
-    const startTimeValue = new Date(`1970-01-01T${startTime}:00Z`);
-    const endTimeValue   = new Date(`1970-01-01T${endTime}:00Z`);
-    const result = await pool
-        .request()
-        .input("Date", sql.Date, date)
-        .input("StartTime", sql.Time(7), startTimeValue)
-        .input("EndTime", sql.Time(7), endTimeValue)
-        .input("RouteId", sql.Int, routeId)
-        .input("VehicleId", sql.Int, vehicleId)
-        .input("InspectorId", sql.Int, inspectorId)
-        .input("Status", sql.NVarChar(20), status)
-        .execute("sp_VehicleSchedules_Create");
+    const id = await nextId("schedules");
 
-    return result.recordset[0].AssignmentId;
+    await (await schedules()).insertOne({
+        Id: id,
+        ...toDocument(data),
+        QrCode: null,
+        CreatedAt: new Date()
+    });
+
+    return id;
 };
 
 const saveQrCode = async (id, qrCode) => {
 
-    const pool = await getPool();
-    await pool
-        .request()
-        .input("Id", sql.BigInt, id)
-        .input("QrCode", sql.NVarChar(sql.MAX), qrCode)
-        .execute("sp_VehicleSchedules_SaveQrCode");
+    await (await schedules()).updateOne({ Id: Number(id), Deleted: { $ne: 1 } }, { $set: { QrCode: qrCode } });
 
     return getbyId(id);
 };
 
 
-const update = async (id, { date, startTime, endTime, routeId, vehicleId, inspectorId, status }) => {
+const update = async (id, data) => {
 
-    const pool = await getPool();
-    const startTimeValue = new Date(`1970-01-01T${startTime}:00Z`);
-    const endTimeValue   = new Date(`1970-01-01T${endTime}:00Z`);
-    await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .input("Date", sql.Date, date)
-        .input("StartTime", sql.Time(7), startTimeValue)
-        .input("EndTime", sql.Time(7), endTimeValue)
-        .input("RouteId", sql.Int, routeId)
-        .input("VehicleId", sql.Int, vehicleId)
-        .input("InspectorId", sql.Int, inspectorId)
-        .input("Status", sql.NVarChar(20), status)
-        .execute("sp_Schedules_Update");
+    await (await schedules()).updateOne({ Id: Number(id), Deleted: { $ne: 1 } }, { $set: toDocument(data) });
 
     return getbyId(id);
 };
@@ -75,14 +76,12 @@ const update = async (id, { date, startTime, endTime, routeId, vehicleId, inspec
 
 const remove = async (id) => {
 
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .execute("sp_Schedules_Delete");
-
-    return result.recordset[0] || null;
+    // Soft delete
+    return (await schedules()).findOneAndUpdate(
+        { Id: Number(id), Deleted: { $ne: 1 } },
+        { $set: { Deleted: 1, DeletedAt: new Date() } },
+        NO_ID
+    );
 };
 
 

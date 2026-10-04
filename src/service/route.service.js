@@ -48,7 +48,7 @@ const updateRoute = async (id, data) => {
 
     const route = await routeRepository.update(id, validateRoute(data));
 
-    if (!route) {
+    if (!route || route.length === 0) {
 
         throw notFound("Route not found");
     }
@@ -67,7 +67,7 @@ const updateRouteStatus = async (id, currentStatus) => {
 
     const route = await routeRepository.updateStatus(id, currentStatus);
 
-    if (!route) {
+    if (!route || route.length === 0) {
 
         throw notFound("Route not found");
     }

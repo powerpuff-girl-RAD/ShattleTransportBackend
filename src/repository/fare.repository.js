@@ -1,63 +1,133 @@
-const { sql, getPool } = require("../config/database");
+const { getCollection, nextId, NO_ID } = require("../config/database");
+
+const distanceFares = () => getCollection("fareDistance");
+const flatFares = () => getCollection("fareFlat");
+const timeBasedFares = () => getCollection("fareTimeBased");
+const farePasses = () => getCollection("farePasses");
+
+const routeFilter = (routeId) => {
+    const parsed = Number(routeId);
+
+    return routeId === undefined || routeId === null || routeId === "" || !Number.isFinite(parsed)
+        ? {}
+        : { RouteId: parsed };
+};
+
+const list = async (collection, filter) => {
+    return (await collection()).find(filter, NO_ID).sort({ Id: 1 }).toArray();
+};
 
 const getAll = async (routeId) => {
-    const pool = await getPool();
+    const filter = routeFilter(routeId);
 
-    const result = await pool
-        .request()
-        .input("RouteId", sql.Int, routeId)
-        .execute("SPR_FareManagement");
-
-    const [farePass = [], distanceFare = [], flatFare = [], timeBasedFare = []] = result.recordsets || [];
+    const [farePass, distanceFare, flatFare, timeBasedFare] = await Promise.all([
+        list(farePasses, filter),
+        list(distanceFares, filter),
+        list(flatFares, filter),
+        list(timeBasedFares, filter)
+    ]);
 
     return {
         farePass,
         distanceFare,
         flatFare,
-        timeBasedFare
+        timeBasedFare: timeBasedFare.map((fare) => ({
+            ...fare,
+            Window: `${fare.StartWindow} - ${fare.EndWindow}`,
+            Applies: fare.AppliesFrom === "ALL" ? "ALL DAYS" : `${fare.AppliesFrom} - ${fare.AppliesTo}`
+        }))
     };
 };
 
-const create = async ({ routeId, minkm, maxkm, standardFare, offPeakFare }) => {
-    const pool = await getPool();
+const toDistanceDocument = ({ routeId, minkm, maxkm, standardFare, offPeakFare }) => ({
+    RouteId: routeId,
+    Minkm: minkm,
+    Maxkm: maxkm,
+    StandardFare: standardFare,
+    OffPeakFare: offPeakFare
+});
 
-    const result = await pool
-        .request()
-        .input("RouteId", sql.Int, routeId)
-        .input("Minkm", sql.Decimal(6, 2), minkm)
-        .input("Maxkm", sql.Decimal(6, 2), maxkm)
-        .input("StandardFare", sql.Decimal(10, 2), standardFare)
-        .input("OffPeakFare", sql.Decimal(10, 2), offPeakFare)
-        .execute("SPR_FareManagement_Insert");
+const create = async (fare) => {
+    const row = { Id: await nextId("fareDistance"), ...toDistanceDocument(fare), CreatedAt: new Date() };
 
-    return result.recordset[0];
+    await (await distanceFares()).insertOne({ ...row });
+
+    return row;
 };
 
+// Inserts every fare collection for a route; removes what was inserted if any step fails
 const createBundle = async (payload) => {
-    const pool = await getPool();
+    const { routeId } = payload;
+    const inserted = [];
 
-    await pool
-        .request()
-        .input("Payload", sql.NVarChar(sql.MAX), JSON.stringify(payload))
-        .execute("SP_FareManagement_BulkInsert");
+    const insertAll = async (collection, sequence, items, mapItem) => {
+        if (items.length === 0) {
+            return;
+        }
 
-    return getAll(payload.routeId);
+        const docs = [];
+
+        for (const item of items) {
+            docs.push({ Id: await nextId(sequence), RouteId: routeId, ...mapItem(item), CreatedAt: new Date() });
+        }
+
+        const target = await collection();
+
+        await target.insertMany(docs.map((doc) => ({ ...doc })));
+
+        inserted.push({ target, ids: docs.map((doc) => doc.Id) });
+    };
+
+    try {
+        await insertAll(distanceFares, "fareDistance", payload.distanceFare, (fare) => ({
+            Minkm: fare.minkm,
+            Maxkm: fare.maxkm,
+            StandardFare: fare.standardFare,
+            OffPeakFare: fare.offPeakFare
+        }));
+
+        await insertAll(flatFares, "fareFlat", payload.flatFares, (fare) => ({
+            PassengerType: fare.passengerType,
+            PassengerDescription: fare.passengerDescription,
+            Local: fare.local,
+            Express: fare.express,
+            Rule: fare.rule,
+            Status: fare.status
+        }));
+
+        await insertAll(timeBasedFares, "fareTimeBased", payload.timeBasedFares, (fare) => ({
+            Period: fare.period,
+            StartWindow: fare.startWindow,
+            EndWindow: fare.endWindow,
+            AppliesFrom: fare.appliesFrom,
+            AppliesTo: fare.appliesTo,
+            FareRule: fare.fareRule,
+            Status: fare.status
+        }));
+
+        await insertAll(farePasses, "farePasses", payload.passes, (pass) => ({
+            PassProduct: pass.passProduct,
+            Tagline: pass.tagline,
+            Price: pass.price,
+            Validity: pass.validity,
+            UsageCondition: pass.usageCondition,
+            IsOn: pass.isOn
+        }));
+    } catch (error) {
+        await Promise.allSettled(inserted.map(({ target, ids }) => target.deleteMany({ Id: { $in: ids } })));
+
+        throw error;
+    }
+
+    return getAll(routeId);
 };
 
-const update = async (id, { routeId, minkm, maxkm, standardFare, offPeakFare }) => {
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .input("Id", sql.BigInt, id)
-        .input("RouteId", sql.Int, routeId)
-        .input("Minkm", sql.Decimal(6, 2), minkm)
-        .input("Maxkm", sql.Decimal(6, 2), maxkm)
-        .input("StandardFare", sql.Decimal(10, 2), standardFare)
-        .input("OffPeakFare", sql.Decimal(10, 2), offPeakFare)
-        .execute("SPR_FareManagement_Update");
-
-    return result.recordset[0] || null;
+const update = async (id, fare) => {
+    return (await distanceFares()).findOneAndUpdate(
+        { Id: Number(id) },
+        { $set: toDistanceDocument(fare) },
+        { ...NO_ID, returnDocument: "after" }
+    );
 };
 
 module.exports = {

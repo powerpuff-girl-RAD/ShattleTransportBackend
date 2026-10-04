@@ -1,4 +1,12 @@
-const { sql, getPool } = require("../config/database");
+const { getCollection, nextId, NO_ID } = require("../config/database");
+
+const vehicles = () => getCollection("vehicles");
+
+// Seat is stored once; Seats is exposed too because update payloads use that name
+const toRow = (vehicle) => {
+    const seats = vehicle.Seats ?? vehicle.Seat;
+    return { ...vehicle, Seats: seats, Seat: seats };
+};
 
 
 const getAll = async () => {
@@ -9,48 +17,48 @@ const getbyId = async (id) => {
     return getVehicle(id);
 };
 
+// id -1 returns every vehicle
 const getVehicle = async (id) => {
-    const pool = await getPool();
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .execute("sp_Vehicles_Get");
-    return result.recordset;
+    const filter = Number(id) === -1 ? { Deleted: { $ne: 1 } } : { Id: Number(id), Deleted: { $ne: 1 } };
+    const rows = await (await vehicles()).find(filter, NO_ID).sort({ Id: 1 }).toArray();
+    return rows.map(toRow);
 };
 
 
-const create = async ({ depot, name, status, type, vehicleId, seat }) => {
+const create = async ({ depot, name, status, type, vehicleId, seat, seats }) => {
 
-    const pool = await getPool();
+    const id = await nextId("vehicles");
 
-    const result = await pool
-        .request()
-        .input("Depot", sql.NVarChar(100), depot)
-        .input("Name", sql.NVarChar(100), name)
-        .input("Status", sql.NVarChar(10), status)
-        .input("Type", sql.Int, type)
-        .input("VehicleId", sql.NVarChar(50), vehicleId)
-        .input("Seat", sql.Int, seat)
-        .execute("sp_Vehicles_Create");
+    await (await vehicles()).insertOne({
+        Id: id,
+        Depot: depot,
+        Name: name,
+        Status: status,
+        Type: Number(type),
+        VehicleId: vehicleId,
+        Seats: Number(seats ?? seat),
+        CreatedAt: new Date()
+    });
 
-    return getbyId(result.recordset[0].Id);
+    return getbyId(id);
 };
 
 
 const update = async (id, { depot, name, status, type, vehicleId, seats }) => {
 
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .input("Depot", sql.NVarChar(100), depot)
-        .input("Name", sql.NVarChar(100), name)
-        .input("Status", sql.NVarChar(10), status)
-        .input("Type", sql.Int, type)
-        .input("VehicleId", sql.NVarChar(50), vehicleId)
-        .input("Seat", sql.Int, seats)
-        .execute("sp_Vehicles_Update");
+    await (await vehicles()).updateOne(
+        { Id: Number(id), Deleted: { $ne: 1 } },
+        {
+            $set: {
+                Depot: depot,
+                Name: name,
+                Status: status,
+                Type: Number(type),
+                VehicleId: vehicleId,
+                Seats: Number(seats)
+            }
+        }
+    );
 
     return getbyId(id);
 };
@@ -58,14 +66,12 @@ const update = async (id, { depot, name, status, type, vehicleId, seats }) => {
 
 const remove = async (id) => {
 
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .execute("sp_Vehicles_Delete");
-
-    return result.recordset[0] || null;
+    // Soft delete
+    return (await vehicles()).findOneAndUpdate(
+        { Id: Number(id), Deleted: { $ne: 1 } },
+        { $set: { Deleted: 1, DeletedAt: new Date() } },
+        NO_ID
+    );
 };
 
 

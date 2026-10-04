@@ -8,9 +8,9 @@ const getAllVehicles = async () => {
 };
 
 
-const createVehicle = async ({ depot, name, status, type, vehicleId, seat }) => {
+const createVehicle = async ({ depot, name, status, type, vehicleId, seats }) => {
 
-    if (!depot || !name || !status || !type || !vehicleId || !seat) {
+    if (!depot || !name || !status || !type || !vehicleId || !seats) {
 
         throw badRequest("Depot, Name, Status, Type, VehicleId and Seat are required");
     }
@@ -21,12 +21,14 @@ const createVehicle = async ({ depot, name, status, type, vehicleId, seat }) => 
         status,
         type,
         vehicleId,
-        seat
+        seats
     });
 };
 
 
-const updateVehicle = async (id, { depot, name, status, type, vehicleId, seats }) => {
+const updateVehicle = async (id, { depot, name, status, type, vehicleId, seats, seat }) => {
+
+    seats = seats ?? seat;
 
     if (!depot || !name || !status || !type || !vehicleId || !seats) {
 
@@ -42,7 +44,7 @@ const updateVehicle = async (id, { depot, name, status, type, vehicleId, seats }
         seats
     });
 
-    if (!vehicle) {
+    if (!vehicle || vehicle.length === 0) {
 
         throw notFound("Vehicle not found");
     }
