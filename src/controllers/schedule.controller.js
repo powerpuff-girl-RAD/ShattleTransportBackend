@@ -19,6 +19,26 @@ const getAll = async (req, res, next) => {
     }
 };
 
+// GET /api/schedules/:id
+const getById = async (req, res, next) => {
+
+    try {
+
+        const id = Number(req.params.id);
+
+        const schedule = await scheduleService.getScheduleById(id);
+
+        res.status(200).json({
+            success: true,
+            data: schedule
+        });
+
+    } catch (error) {
+
+        next(error);
+    }
+};
+
 
 // POST /api/schedules
 const assign = async (req, res, next) => {
@@ -85,6 +105,7 @@ const remove = async (req, res, next) => {
 
 module.exports = {
     getAll,
+    getById,
     assign,
     update,
     remove
