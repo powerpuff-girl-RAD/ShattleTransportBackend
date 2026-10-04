@@ -1,101 +1,60 @@
-const { sql, getPool } = require("../config/database");
+const { getCollection, nextId, NO_ID } = require("../config/database");
+
+const records = () => getCollection("healthRecords");
 
 
 // GET ALL
 const getAll = async () => {
-
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .execute("sp_Health_GetAll");
-
-    return result.recordset;
+    return (await records()).find({ Deleted: { $ne: 1 } }, NO_ID).sort({ Id: 1 }).toArray();
 };
 
 
 // GET BY ID
 const getById = async (id) => {
-
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .execute("sp_Health_GetById");
-
-    return result.recordset[0] || null;
+    return (await records()).findOne({ Id: Number(id), Deleted: { $ne: 1 } }, NO_ID);
 };
 
 
 // CREATE
 const create = async (data) => {
+    const record = {
+        Id: await nextId("healthRecords"),
+        PatientName: data.patientName,
+        Status: data.status,
+        Description: data.description || null,
+        CreatedAt: new Date()
+    };
 
-    const pool = await getPool();
+    await (await records()).insertOne({ ...record });
 
-    const result = await pool
-        .request()
-        .input(
-            "PatientName",
-            sql.NVarChar(100),
-            data.patientName
-        )
-        .input(
-            "Status",
-            sql.NVarChar(50),
-            data.status
-        )
-        .input(
-            "Description",
-            sql.NVarChar(500),
-            data.description || null
-        )
-        .execute("sp_Health_Create");
-
-    return result.recordset[0];
+    return record;
 };
 
 
 // UPDATE
 const update = async (id, data) => {
-
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .input(
-            "PatientName",
-            sql.NVarChar(100),
-            data.patientName
-        )
-        .input(
-            "Status",
-            sql.NVarChar(50),
-            data.status
-        )
-        .input(
-            "Description",
-            sql.NVarChar(500),
-            data.description || null
-        )
-        .execute("sp_Health_Update");
-
-    return result.recordset[0] || null;
+    return (await records()).findOneAndUpdate(
+        { Id: Number(id), Deleted: { $ne: 1 } },
+        {
+            $set: {
+                PatientName: data.patientName,
+                Status: data.status,
+                Description: data.description || null
+            }
+        },
+        { ...NO_ID, returnDocument: "after" }
+    );
 };
 
 
 // DELETE
 const remove = async (id) => {
-
-    const pool = await getPool();
-
-    const result = await pool
-        .request()
-        .input("Id", sql.Int, id)
-        .execute("sp_Health_Delete");
-
-    return result.recordset[0];
+    // Soft delete
+    return (await records()).findOneAndUpdate(
+        { Id: Number(id), Deleted: { $ne: 1 } },
+        { $set: { Deleted: 1, DeletedAt: new Date() } },
+        NO_ID
+    );
 };
 
 

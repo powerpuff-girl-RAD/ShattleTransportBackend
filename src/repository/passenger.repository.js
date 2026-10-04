@@ -1,54 +1,104 @@
-﻿const { sql, getPool } = require('../config/database');
+const { getCollection, nextId, NO_ID } = require('../config/database');
+
+const DUPLICATE_KEY = 11000;
+
+const users = () => getCollection('users');
+const profiles = () => getCollection('passengerProfiles');
+const accounts = () => getCollection('passengerAccounts');
+const topUps = () => getCollection('passengerTopUps');
+
+const round2 = (value) => Math.round(value * 100) / 100;
 
 // ─── PassengerAccounts ────────────────────────────────────────────────────
 
 /** Fetches the passenger account; creates one lazily if it does not exist. */
 const getOrCreateAccount = async (userId) => {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('UserId', sql.Int, userId)
-        .execute('sp_PassengerAccount_GetOrCreate');
-    return result.recordset[0];
+    const collection = await accounts();
+    const filter = { UserId: Number(userId) };
+
+    const existing = await collection.findOne(filter, NO_ID);
+    if (existing) return existing;
+
+    try {
+        await collection.insertOne({
+            Id: await nextId('passengerAccounts'),
+            UserId: Number(userId),
+            Balance: 0,
+            Currency: 'LKR',
+            Status: 'Active',
+            CreatedAt: new Date(),
+        });
+    } catch (error) {
+        if (error.code !== DUPLICATE_KEY) throw error;
+    }
+
+    return collection.findOne(filter, NO_ID);
 };
 
 // ─── PassengerProfile ─────────────────────────────────────────────────────
 
-/** Returns the full passenger profile joined across Users, PassengerProfile and PassengerAccounts. */
+/** Returns the full passenger profile combined from users, passengerProfiles and passengerAccounts. */
 const getProfile = async (userId) => {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('UserId', sql.Int, userId)
-        .execute('sp_PassengerProfile_Get');
-    return result.recordset[0] || null;
+    const user = await (await users()).findOne({ Id: Number(userId) }, NO_ID);
+    if (!user) return null;
+
+    const [profile, account] = await Promise.all([
+        profiles().then((c) => c.findOne({ UserId: Number(userId) }, NO_ID)),
+        getOrCreateAccount(userId),
+    ]);
+
+    return {
+        UserId: user.Id,
+        Email: user.Email,
+        FullName: user.FullName,
+        Role: user.Role,
+        MemberSince: user.CreatedAt,
+        Phone: profile?.Phone ?? null,
+        Address: profile?.Address ?? null,
+        DateOfBirth: profile?.DateOfBirth ?? null,
+        NIC: profile?.NIC ?? null,
+        AvatarUrl: profile?.AvatarUrl ?? null,
+        AccountId: account.Id,
+        Balance: account.Balance,
+        Currency: account.Currency,
+        AccountStatus: account.Status,
+    };
 };
 
-/** Creates or updates the extended profile row and FullName in Users. */
+/** Creates or updates the extended profile row and FullName in users. */
 const upsertProfile = async (userId, { fullName, phone, address, dateOfBirth, nic }) => {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('UserId',      sql.Int,          userId)
-        .input('FullName',    sql.NVarChar(255), fullName || null)
-        .input('Phone',       sql.NVarChar(20),  phone || null)
-        .input('Address',     sql.NVarChar(300), address || null)
-        .input('DateOfBirth', sql.Date,          dateOfBirth || null)
-        .input('NIC',         sql.NVarChar(50),  nic || null)
-        .execute('sp_PassengerProfile_Upsert');
-    return result.recordset[0] || null;
+    if (fullName) {
+        await (await users()).updateOne({ Id: Number(userId) }, { $set: { FullName: fullName } });
+    }
+
+    await (await profiles()).updateOne(
+        { UserId: Number(userId) },
+        {
+            $set: {
+                Phone: phone || null,
+                Address: address || null,
+                DateOfBirth: dateOfBirth || null,
+                NIC: nic || null,
+            },
+        },
+        { upsert: true }
+    );
+
+    return getProfile(userId);
 };
 
 /** Replaces the PasswordHash. The service layer must verify the old password before calling. */
 const changePasswordHash = async (userId, newHash) => {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('UserId',          sql.Int,          userId)
-        .input('NewPasswordHash', sql.NVarChar(255), newHash)
-        .execute('sp_PassengerPassword_Change');
-    return result.recordset[0]?.Affected ?? 0;
+    const result = await (await users()).updateOne(
+        { Id: Number(userId) },
+        { $set: { PasswordHash: newHash } }
+    );
+    return result.matchedCount;
 };
 
 // ─── Top-Up & Transactions ────────────────────────────────────────────────
 
-/** Processes top-up in database, updating balance and recording transaction. */
+/** Increments the balance atomically and records the transaction. */
 const topUpAccount = async ({
     userId,
     amount,
@@ -59,38 +109,66 @@ const topUpAccount = async ({
     gatewayRef,
     transactionRef,
 }) => {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('UserId',         sql.Int,           userId)
-        .input('Amount',         sql.Decimal(12, 2), amount)
-        .input('PaymentMethod',  sql.NVarChar(50),  paymentMethod)
-        .input('CardLast4',      sql.NVarChar(4),   cardLast4 || null)
-        .input('CardType',       sql.NVarChar(20),  cardType || null)
-        .input('CardholderName', sql.NVarChar(100), cardholderName || null)
-        .input('GatewayRef',     sql.NVarChar(100), gatewayRef || null)
-        .input('TransactionRef', sql.NVarChar(50),  transactionRef)
-        .execute('sp_PassengerAccount_TopUp');
-    return result.recordset[0] || null;
+    const account = await getOrCreateAccount(userId);
+    const accountCollection = await accounts();
+
+    const before = await accountCollection.findOneAndUpdate(
+        { Id: account.Id },
+        { $inc: { Balance: amount } },
+        { ...NO_ID, returnDocument: 'before' }
+    );
+    if (!before) return null;
+
+    const transaction = {
+        Id: await nextId('passengerTopUps'),
+        UserId: Number(userId),
+        AccountId: account.Id,
+        TransactionRef: transactionRef,
+        Amount: amount,
+        Currency: account.Currency || 'LKR',
+        PaymentMethod: paymentMethod,
+        CardLast4: cardLast4 || null,
+        CardType: cardType || null,
+        CardholderName: cardholderName || null,
+        GatewayRef: gatewayRef || null,
+        Status: 'Completed',
+        CreatedAt: new Date(),
+    };
+
+    try {
+        await (await topUps()).insertOne({ ...transaction });
+    } catch (error) {
+        await accountCollection.updateOne({ Id: account.Id }, { $inc: { Balance: -amount } });
+        throw error;
+    }
+
+    return {
+        ...transaction,
+        PreviousBalance: before.Balance,
+        NewBalance: round2(before.Balance + amount),
+    };
 };
 
 /** Retrieves recent top-up transactions for a passenger. */
 const getTopUpHistory = async (userId, limit = 20) => {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('UserId', sql.Int, userId)
-        .input('Limit',  sql.Int, limit)
-        .execute('sp_PassengerTopUp_GetHistory');
-    return result.recordset || [];
+    return (await topUps())
+        .find({ UserId: Number(userId) }, NO_ID)
+        .sort({ CreatedAt: -1 })
+        .limit(Number(limit))
+        .toArray();
 };
 
 /** Retrieves top-up transaction details by reference. */
 const getTopUpByRef = async (transactionRef, userId) => {
-    const pool = await getPool();
-    const result = await pool.request()
-        .input('TransactionRef', sql.NVarChar(50), transactionRef)
-        .input('UserId',         sql.Int,          userId)
-        .execute('sp_PassengerTopUp_GetByRef');
-    return result.recordset[0] || null;
+    const transaction = await (await topUps()).findOne(
+        { TransactionRef: transactionRef, UserId: Number(userId) },
+        NO_ID
+    );
+    if (!transaction) return null;
+
+    const account = await (await accounts()).findOne({ Id: transaction.AccountId }, NO_ID);
+
+    return { ...transaction, CurrentBalance: account ? account.Balance : 0 };
 };
 
 module.exports = {

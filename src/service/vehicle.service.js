@@ -1,4 +1,5 @@
 const vehicleRepository = require("../repository/vehicle.repository");
+const { badRequest, notFound } = require("../utils/errors");
 
 
 const getAllVehicles = async () => {
@@ -7,17 +8,11 @@ const getAllVehicles = async () => {
 };
 
 
-const createVehicle = async ({ depot, name, status, type, vehicleId, seat }) => {
+const createVehicle = async ({ depot, name, status, type, vehicleId, seats }) => {
 
-    if (!depot || !name || !status || !type || !vehicleId || !seat) {
+    if (!depot || !name || !status || !type || !vehicleId || !seats) {
 
-        const error = new Error(
-            "Depot, Name, Status, Type, VehicleId and Seat are required"
-        );
-
-        error.statusCode = 400;
-
-        throw error;
+        throw badRequest("Depot, Name, Status, Type, VehicleId and Seat are required");
     }
 
     return await vehicleRepository.create({
@@ -26,22 +21,18 @@ const createVehicle = async ({ depot, name, status, type, vehicleId, seat }) => 
         status,
         type,
         vehicleId,
-        seat
+        seats
     });
 };
 
 
-const updateVehicle = async (id, { depot, name, status, type, vehicleId, seats }) => {
+const updateVehicle = async (id, { depot, name, status, type, vehicleId, seats, seat }) => {
+
+    seats = seats ?? seat;
 
     if (!depot || !name || !status || !type || !vehicleId || !seats) {
 
-        const error = new Error(
-            "Depot, Name, Status, Type, VehicleId and Seat are required"
-        );
-
-        error.statusCode = 400;
-
-        throw error;
+        throw badRequest("Depot, Name, Status, Type, VehicleId and Seat are required");
     }
 
     const vehicle = await vehicleRepository.update(id, {
@@ -53,13 +44,9 @@ const updateVehicle = async (id, { depot, name, status, type, vehicleId, seats }
         seats
     });
 
-    if (!vehicle) {
+    if (!vehicle || vehicle.length === 0) {
 
-        const error = new Error("Vehicle not found");
-
-        error.statusCode = 404;
-
-        throw error;
+        throw notFound("Vehicle not found");
     }
 
     return vehicle;
@@ -72,11 +59,7 @@ const deleteVehicle = async (id) => {
 
     if (!vehicle) {
 
-        const error = new Error("Vehicle not found");
-
-        error.statusCode = 404;
-
-        throw error;
+        throw notFound("Vehicle not found");
     }
 };
 
