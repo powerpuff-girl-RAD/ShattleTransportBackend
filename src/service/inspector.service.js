@@ -1,5 +1,10 @@
+const jwt = require("jsonwebtoken");
+
+const env = require("../config/env");
 const inspectorRepository = require("../repository/inspector.repository");
-const { notFound, conflict } = require("../utils/errors");
+const tokenRepository = require("../repository/token.repository");
+const { runChecks } = require("./inspection.checks");
+const { badRequest, notFound, conflict } = require("../utils/errors");
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -17,6 +22,22 @@ const todayRange = () => {
     from.setHours(0, 0, 0, 0);
     const to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
     return { from, to };
+};
+
+// QR codes carry a short-lived signed JWT (made by token.service generateQR).
+// Smartcards / barcodes are typed in by the inspector as a plain serial.
+const resolveSerial = ({ qrPayload, tokenSerial }) => {
+
+    if (tokenSerial) {
+        return { serial: String(tokenSerial).trim().toUpperCase() };
+    }
+
+    try {
+        const decoded = jwt.verify(qrPayload, env.jwt.qrSecret);
+        return { serial: decoded.serial };
+    } catch {
+        return { serial: null, qrError: "QR code is invalid or has expired. Ask the passenger to refresh it." };
+    }
 };
 
 
@@ -124,9 +145,60 @@ const endShift = async (inspectorId) => {
     return toShift(schedule, null);
 };
 
+// Inspect one passenger token. Every inspection is saved, valid or not:
+// that is the audit trail (Lecture 7) and the data managers use for reports.
+const inspect = async (inspectorId, input) => {
+
+    if (!input.qrPayload && !input.tokenSerial) {
+        throw badRequest("qrPayload or tokenSerial is required");
+    }
+
+    // Business rule: inspections only happen during an active shift
+    const openShift = await inspectorRepository.findOpenShift(inspectorId);
+
+    if (!openShift) {
+        throw conflict("Start your shift before inspecting tickets");
+    }
+
+    const { serial, qrError } = resolveSerial(input);
+
+    const [schedule, token, journey] = await Promise.all([
+        inspectorRepository.findScheduleById(openShift.ScheduleId),
+        serial ? tokenRepository.getTokenBySerial(serial) : null,
+        serial ? inspectorRepository.findOpenJourney(serial) : null
+    ]);
+
+    const outcome = runChecks({ token, journey, qrError, now: new Date() });
+
+    const inspection = await inspectorRepository.createInspection({
+        InspectorId: Number(inspectorId),
+        ShiftId: openShift.Id,
+        ScheduleId: openShift.ScheduleId,
+        TokenSerial: serial || "UNREADABLE",
+        PassengerUserId: token ? token.UserId : null,
+        RouteNumber: schedule?.RouteNumber ?? null,
+        RouteName: schedule?.RouteName ?? null,
+        VehicleNumber: schedule?.VehicleNumber ?? null,
+        Method: input.qrPayload ? "QR" : "Manual",
+        Result: outcome.result,
+        Reason: outcome.reason,
+        Message: outcome.message
+    });
+
+    return {
+        inspection: toInspection(inspection),
+        message: outcome.message,
+        checks: outcome.steps,
+        // Confidentiality: only what the inspector needs, never email or account ids
+        passenger: token ? { name: token.PassengerName, balance: Number(token.Balance) } : null,
+        journey: journey ? { boardedAt: journey.StartedAt, boardingStop: journey.BoardingStop ?? null } : null
+    };
+};
+
 
 module.exports = {
     getDashboard,
     startShift,
-    endShift
+    endShift,
+    inspect
 };

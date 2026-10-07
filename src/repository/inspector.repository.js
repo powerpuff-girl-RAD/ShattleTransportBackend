@@ -4,6 +4,7 @@ const users = () => getCollection("users");
 const schedules = () => getCollection("schedules");
 const shifts = () => getCollection("inspectorShifts");
 const inspections = () => getCollection("inspections");
+const journeys = () => getCollection("journeys");
 
 
 // ─── Inspector profile ────────────────────────────────────────────────────
@@ -19,11 +20,11 @@ const findInspectorById = async (id) => {
 
 // ─── Assigned schedule (created by a manager in the web portal) ───────────
 
-// The inspector's first schedule on the given "YYYY-MM-DD" date, with route and vehicle joined in
-const findScheduleForDate = async (inspectorId, date) => {
+// One schedule matching the filter, with route and vehicle joined in
+const findSchedule = async (match) => {
 
     const rows = await (await schedules()).aggregate([
-        { $match: { InspectorId: Number(inspectorId), Date: date, Deleted: { $ne: 1 } } },
+        { $match: { ...match, Deleted: { $ne: 1 } } },
         { $sort: { StartTime: 1 } },
         { $limit: 1 },
         { $lookup: { from: "routes", localField: "RouteId", foreignField: "Id", as: "route" } },
@@ -39,6 +40,15 @@ const findScheduleForDate = async (inspectorId, date) => {
     ]).toArray();
 
     return rows[0] || null;
+};
+
+// The inspector's first schedule on the given "YYYY-MM-DD" date
+const findScheduleForDate = (inspectorId, date) => {
+    return findSchedule({ InspectorId: Number(inspectorId), Date: date });
+};
+
+const findScheduleById = (scheduleId) => {
+    return findSchedule({ Id: Number(scheduleId) });
 };
 
 
@@ -74,7 +84,32 @@ const closeShift = async (shiftId) => {
 };
 
 
-// ─── Inspections (written by the Scan screen in Screen 2) ─────────────────
+// ─── Journeys (written by the passenger tap-in / tap-out feature) ─────────
+// Integration contract with the journey feature (shared database, Lecture 8):
+// { TokenSerial, Status: "InProgress" | "Completed", StartedAt, BoardingStop }
+
+const findOpenJourney = async (tokenSerial) => {
+    return (await journeys()).findOne(
+        { TokenSerial: tokenSerial, Status: "InProgress" },
+        { ...NO_ID, sort: { StartedAt: -1 } }
+    );
+};
+
+
+// ─── Inspections ──────────────────────────────────────────────────────────
+
+const createInspection = async (data) => {
+
+    const inspection = {
+        Id: await nextId("inspections"),
+        ...data,
+        InspectedAt: new Date()
+    };
+
+    await (await inspections()).insertOne({ ...inspection });
+
+    return inspection;
+};
 
 // result is optional: pass "Valid" to count only valid inspections
 const countInspectionsBetween = async (inspectorId, from, to, result) => {
@@ -100,9 +135,12 @@ const findRecentInspections = async (inspectorId, limit = 3) => {
 module.exports = {
     findInspectorById,
     findScheduleForDate,
+    findScheduleById,
     findOpenShift,
     createShift,
     closeShift,
+    findOpenJourney,
+    createInspection,
     countInspectionsBetween,
     findRecentInspections
 };

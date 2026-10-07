@@ -27,8 +27,19 @@ const endShift = async (req, res, next) => {
     }
 };
 
+const inspect = async (req, res, next) => {
+    try {
+        const { qrPayload, tokenSerial } = req.body;
+        const result = await inspectorService.inspect(req.user.id, { qrPayload, tokenSerial });
+        res.status(201).json({ success: true, ...result });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getDashboard,
     startShift,
-    endShift
+    endShift,
+    inspect
 };
