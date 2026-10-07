@@ -12,6 +12,7 @@ const scheduleRoutes = require("./routes/schedule.routes");
 const fareRoutes = require("./routes/fare.routes");
 const passengerRoutes = require("./routes/passenger.routes");
 const tokenRoutes = require("./routes/token.routes");
+const journeyRoutes = require("./routes/journey.routes");
 const inspectorRoutes = require("./routes/inspector.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
@@ -79,11 +80,6 @@ app.use(
 app.use(
     "/api/passenger/token",
     tokenRoutes
-);
-
-app.use(
-    "/api/inspector",
-    inspectorRoutes
 );
 
 
