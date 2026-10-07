@@ -25,7 +25,11 @@ const ensureIndexes = async (database) => {
         database.collection("passengerAccounts").createIndex({ UserId: 1 }, { unique: true }),
         database.collection("passengerTokens").createIndex({ TokenSerial: 1 }, { unique: true }),
         database.collection("passengerTopUps").createIndex({ TransactionRef: 1 }, { unique: true }),
-        database.collection("passengerTopUps").createIndex({ UserId: 1, CreatedAt: -1 })
+        database.collection("passengerTopUps").createIndex({ UserId: 1, CreatedAt: -1 }),
+        database.collection("journeys").createIndex({ Id: 1 }, { unique: true }),
+        database.collection("journeys").createIndex({ UserId: 1, Status: 1 }),
+        database.collection("notifications").createIndex({ Id: 1 }, { unique: true }),
+        database.collection("notifications").createIndex({ UserId: 1, CreatedAt: -1 })
     ]);
 };
 
