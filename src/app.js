@@ -14,6 +14,7 @@ const passengerRoutes = require("./routes/passenger.routes");
 const tokenRoutes = require("./routes/token.routes");
 const journeyRoutes = require("./routes/journey.routes");
 const inspectorRoutes = require("./routes/inspector.routes");
+const reportRoutes = require("./routes/report.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 
@@ -90,6 +91,11 @@ app.use(
 app.use(
     "/api/journey",
     journeyRoutes
+);
+
+app.use(
+    "/api/reports",
+    reportRoutes
 );
 
 app.use((req, res) => {

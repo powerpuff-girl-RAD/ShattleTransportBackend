@@ -14,4 +14,14 @@ router.post("/shift/start", inspectorController.startShift);
 router.post("/shift/end", inspectorController.endShift);
 router.post("/inspect", inspectorController.inspect);
 
+router.get("/inspections", inspectorController.listInspections);
+router.get("/inspections/:id", inspectorController.getInspection);
+
+router.post("/violations", inspectorController.recordViolation);
+router.get("/violations", inspectorController.listViolations);
+
+router.get("/stats", inspectorController.getStats);
+router.get("/schedule", inspectorController.getUpcomingSchedule);
+router.put("/password", inspectorController.changePassword);
+
 module.exports = router;
