@@ -1,5 +1,5 @@
 const { badRequest } = require("../../../utils/errors");
-const { requiredText, splitRange } = require("../../../utils/validators");
+const { optionalFareId, requiredText, splitRange } = require("../../../utils/validators");
 
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
@@ -31,6 +31,7 @@ module.exports = {
             }
 
             return {
+                Id: optionalFareId(fare.Id ?? fare.id, field),
                 period: requiredText(fare.period, `${field}.period`),
                 startWindow,
                 endWindow,

@@ -10,6 +10,20 @@ const validateRouteId = (routeId) => {
     return parsedRouteId;
 };
 
+const optionalFareId = (id, field) => {
+    if (id === undefined || id === null) {
+        return undefined;
+    }
+
+    const parsedId = Number(id);
+
+    if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        throw badRequest(`${field}.Id must be a positive integer`);
+    }
+
+    return parsedId;
+};
+
 const requiredText = (value, field) => {
     if (typeof value !== "string" || value.trim() === "") {
         throw badRequest(`${field} is required and must be a non-empty string`);
@@ -38,6 +52,7 @@ const splitRange = (value, field) => {
 
 module.exports = {
     validateRouteId,
+    optionalFareId,
     requiredText,
     requiredAmount,
     splitRange
