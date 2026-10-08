@@ -3,7 +3,6 @@ const express = require("express");
 const { authenticateToken } = require("../middleware/auth.middleware");
 const { requireRole } = require("../middleware/role.middleware");
 const inspectorController = require("../controllers/inspector.controller");
-router.post("/inspect", inspectorController.inspect);
 
 const router = express.Router();
 
@@ -13,5 +12,6 @@ router.use(authenticateToken, requireRole("Inspector"));
 router.get("/dashboard", inspectorController.getDashboard);
 router.post("/shift/start", inspectorController.startShift);
 router.post("/shift/end", inspectorController.endShift);
+router.post("/inspect", inspectorController.inspect);
 
 module.exports = router;
