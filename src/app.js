@@ -82,6 +82,15 @@ app.use(
     tokenRoutes
 );
 
+app.use(
+    "/api/inspector",
+    inspectorRoutes
+);
+
+app.use(
+    "/api/journey",
+    journeyRoutes
+);
 
 app.use((req, res) => {
 
