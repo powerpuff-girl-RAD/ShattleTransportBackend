@@ -1,6 +1,6 @@
 const fareRepository = require("../repository/fare.repository");
 const fareStrategies = require("./fare/strategies");
-const { badRequest, notFound } = require("../utils/errors");
+const { badRequest } = require("../utils/errors");
 const { validateRouteId } = require("../utils/validators");
 
 const validateFare = (data) => {
@@ -49,7 +49,19 @@ const validateFareBundle = (data) => {
     const bundle = { routeId };
 
     for (const strategy of fareStrategies) {
-        bundle[strategy.collection] = strategy.validate(data[strategy.collection], { routeId });
+        const items = strategy.validate(data[strategy.collection], { routeId });
+        const ids = new Set();
+
+        for (const item of items) {
+            if (item.Id !== undefined && ids.has(item.Id)) {
+                throw badRequest(`${strategy.collection} contains duplicate Id ${item.Id}`);
+            }
+            if (item.Id !== undefined) {
+                ids.add(item.Id);
+            }
+        }
+
+        bundle[strategy.collection] = items;
     }
 
     return bundle;
@@ -67,18 +79,8 @@ const create = async (data) => {
     return fareRepository.create(validateFare(data));
 };
 
-const update = async (id, data) => {
-    if (!/^[1-9]\d*$/.test(String(id))) {
-        throw badRequest("id must be a positive integer");
-    }
-
-    const fare = await fareRepository.update(String(id), validateFare(data));
-
-    if (!fare) {
-        throw notFound("Fare not found");
-    }
-
-    return fare;
+const update = async (data) => {
+    return fareRepository.createBundle(validateFareBundle(data));
 };
 
 module.exports = {

@@ -1,4 +1,5 @@
 const routeRepository = require("../repository/route.repository");
+const fareRepository = require("../repository/fare.repository");
 const RouteBuilder = require("../builders/route.builder");
 const { badRequest, notFound } = require("../utils/errors");
 
@@ -39,7 +40,11 @@ const getAllRoutes = async () => {
 // CREATE
 const createRoute = async (data) => {
 
-    return await routeRepository.create(validateRoute(data));
+    const route = await routeRepository.create(validateRoute(data));
+
+    await fareRepository.createDefaultFlatFares(route.Id);
+
+    return route;
 };
 
 

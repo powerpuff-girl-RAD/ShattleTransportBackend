@@ -1,5 +1,5 @@
 const { badRequest } = require("../../../utils/errors");
-const { validateRouteId, requiredText, requiredAmount } = require("../../../utils/validators");
+const { validateRouteId, optionalFareId, requiredText, requiredAmount } = require("../../../utils/validators");
 
 module.exports = {
     collection: "flatFares",
@@ -13,6 +13,7 @@ module.exports = {
             }
 
             return {
+                Id: optionalFareId(fare.Id, field),
                 passengerType: requiredText(fare.PassengerType, `${field}.PassengerType`),
                 passengerDescription: requiredText(fare.PassengerDescription, `${field}.PassengerDescription`),
                 local: requiredAmount(fare.Local, `${field}.Local`),
