@@ -4,7 +4,6 @@ const users = () => getCollection("users");
 const schedules = () => getCollection("schedules");
 const shifts = () => getCollection("inspectorShifts");
 const inspections = () => getCollection("inspections");
-const journeys = () => getCollection("journeys");
 
 
 // ─── Inspector profile ────────────────────────────────────────────────────
@@ -84,18 +83,6 @@ const closeShift = async (shiftId) => {
 };
 
 
-// ─── Journeys (written by the passenger tap-in / tap-out feature) ─────────
-// Integration contract with the journey feature (shared database, Lecture 8):
-// { TokenSerial, Status: "InProgress" | "Completed", StartedAt, BoardingStop }
-
-const findOpenJourney = async (tokenSerial) => {
-    return (await journeys()).findOne(
-        { TokenSerial: tokenSerial, Status: "InProgress" },
-        { ...NO_ID, sort: { StartedAt: -1 } }
-    );
-};
-
-
 // ─── Inspections ──────────────────────────────────────────────────────────
 
 const createInspection = async (data) => {
@@ -139,7 +126,6 @@ module.exports = {
     findOpenShift,
     createShift,
     closeShift,
-    findOpenJourney,
     createInspection,
     countInspectionsBetween,
     findRecentInspections

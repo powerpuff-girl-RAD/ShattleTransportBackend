@@ -1,3 +1,10 @@
+// Pipe and Filter / Chain of Responsibility (Lecture 4):
+// each check looks at the inspection context and either passes (returns null)
+// or returns the violation. Checks run in order and the FIRST failure decides
+// the result.
+// Modifiability (Lecture 7, "localize changes"): to add a new rule, add one
+// object to this array. Nothing else in the system has to change.
+
 const checks = [
     {
         name: "Token recognised",
@@ -26,6 +33,13 @@ const checks = [
         run: ({ journey }) => journey ? null : {
             reason: "No Boarding Scan",
             message: "The passenger did not scan their token when boarding"
+        }
+    },
+    {
+        name: "Boarded this route",
+        run: ({ journey, schedule }) => !schedule || journey.RouteId === schedule.RouteId ? null : {
+            reason: "Invalid Journey",
+            message: `The passenger tapped in on route ${journey.RouteNumber || journey.RouteId}, not this bus's route`
         }
     },
     {

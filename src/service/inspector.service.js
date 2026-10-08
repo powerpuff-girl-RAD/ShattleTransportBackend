@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const env = require("../config/env");
 const inspectorRepository = require("../repository/inspector.repository");
 const tokenRepository = require("../repository/token.repository");
+const journeyRepository = require("../repository/journey.repository");
 const { runChecks } = require("./inspection.checks");
 const { badRequest, notFound, conflict } = require("../utils/errors");
 
@@ -162,13 +163,15 @@ const inspect = async (inspectorId, input) => {
 
     const { serial, qrError } = resolveSerial(input);
 
-    const [schedule, token, journey] = await Promise.all([
+    const [schedule, token] = await Promise.all([
         inspectorRepository.findScheduleById(openShift.ScheduleId),
-        serial ? tokenRepository.getTokenBySerial(serial) : null,
-        serial ? inspectorRepository.findOpenJourney(serial) : null
+        serial ? tokenRepository.getTokenBySerial(serial) : null
     ]);
 
-    const outcome = runChecks({ token, journey, qrError, now: new Date() });
+    // Reuse the passenger team's journey feature (reusability, Lecture 5)
+    const journey = token ? await journeyRepository.getActiveJourney(token.UserId) : null;
+
+    const outcome = runChecks({ token, journey, schedule, qrError, now: new Date() });
 
     const inspection = await inspectorRepository.createInspection({
         InspectorId: Number(inspectorId),
@@ -191,7 +194,11 @@ const inspect = async (inspectorId, input) => {
         checks: outcome.steps,
         // Confidentiality: only what the inspector needs, never email or account ids
         passenger: token ? { name: token.PassengerName, balance: Number(token.Balance) } : null,
-        journey: journey ? { boardedAt: journey.StartedAt, boardingStop: journey.BoardingStop ?? null } : null
+        journey: journey ? {
+            routeNumber: journey.RouteNumber,
+            boardingStop: journey.BoardingStop?.StopName ?? null,
+            boardedAt: journey.BoardingStop?.Timestamp ?? journey.CreatedAt
+        } : null
     };
 };
 
