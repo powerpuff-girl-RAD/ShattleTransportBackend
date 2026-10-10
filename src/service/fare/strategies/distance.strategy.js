@@ -1,5 +1,5 @@
 const { badRequest } = require("../../../utils/errors");
-const { requiredAmount } = require("../../../utils/validators");
+const { optionalFareId, requiredAmount } = require("../../../utils/validators");
 
 module.exports = {
     collection: "distanceFare",
@@ -15,6 +15,7 @@ module.exports = {
             }
 
             return {
+                Id: optionalFareId(fare.Id, field),
                 minkm,
                 maxkm,
                 standardFare: requiredAmount(fare.StandardFare, `${field}.StandardFare`),

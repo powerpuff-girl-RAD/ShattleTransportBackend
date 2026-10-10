@@ -7,6 +7,6 @@ const router = express.Router();
 
 router.get("/", authenticateToken, fareController.getAll);
 router.post("/", authenticateToken, fareController.create);
-router.put("/:id", authenticateToken, fareController.update);
+router.put("/", authenticateToken, fareController.update);
 
 module.exports = router;
