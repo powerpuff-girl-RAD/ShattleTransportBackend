@@ -5,6 +5,41 @@ const flatFares = () => getCollection("fareFlat");
 const timeBasedFares = () => getCollection("fareTimeBased");
 const farePasses = () => getCollection("farePasses");
 
+const DEFAULT_FLAT_FARES = [
+    {
+        PassengerType: "Adult",
+        PassengerDescription: "Ages 18-59",
+        Local: 150,
+        Express: 200,
+        Rule: "BASE",
+        Status: "Active"
+    },
+    {
+        PassengerType: "Student",
+        PassengerDescription: "Valid student ID",
+        Local: 75,
+        Express: 100,
+        Rule: "50% OFF",
+        Status: "Active"
+    },
+    {
+        PassengerType: "Child",
+        PassengerDescription: "Ages 5-17",
+        Local: 75,
+        Express: 100,
+        Rule: "50% OFF",
+        Status: "Active"
+    },
+    {
+        PassengerType: "Senior",
+        PassengerDescription: "Ages 60+",
+        Local: 100,
+        Express: 140,
+        Rule: "33% OFF",
+        Status: "Active"
+    }
+];
+
 const routeFilter = (routeId) => {
     const parsed = Number(routeId);
 
@@ -55,38 +90,89 @@ const create = async (fare) => {
     return row;
 };
 
-// Inserts every fare collection for a route; removes what was inserted if any step fails
+const createDefaultFlatFares = async (routeId) => {
+    const rows = [];
+
+    for (const fare of DEFAULT_FLAT_FARES) {
+        rows.push({
+            Id: await nextId("fareFlat"),
+            RouteId: Number(routeId),
+            ...fare,
+            CreatedAt: new Date()
+        });
+    }
+
+    await (await flatFares()).insertMany(rows.map((row) => ({ ...row })));
+
+    return rows;
+};
+
+// Updates supplied fare ids and inserts new fares; removes inserted fares if a later step fails
 const createBundle = async (payload) => {
     const { routeId } = payload;
     const inserted = [];
 
-    const insertAll = async (collection, sequence, items, mapItem) => {
+    const saveAll = async (collection, sequence, items, mapItem) => {
         if (items.length === 0) {
             return;
         }
 
-        const docs = [];
+        const target = await collection();
+        const docsToInsert = [];
 
         for (const item of items) {
-            docs.push({ Id: await nextId(sequence), RouteId: routeId, ...mapItem(item), CreatedAt: new Date() });
+            const fields = mapItem(item);
+
+            if (item.Id !== undefined) {
+                const createdAt = new Date();
+                const result = await target.updateOne(
+                    { Id: { $in: [item.Id, String(item.Id)] }, RouteId: routeId },
+                    {
+                        $set: fields,
+                        $setOnInsert: {
+                            Id: item.Id,
+                            RouteId: routeId,
+                            CreatedAt: createdAt
+                        }
+                    },
+                    { upsert: true }
+                );
+
+                await (await getCollection("counters")).updateOne(
+                    { _id: sequence },
+                    { $max: { seq: item.Id } },
+                    { upsert: true }
+                );
+
+                if (result.upsertedCount > 0) {
+                    inserted.push({ target, routeId, ids: [item.Id] });
+                }
+            } else {
+                docsToInsert.push({
+                    Id: await nextId(sequence),
+                    RouteId: routeId,
+                    ...fields,
+                    CreatedAt: new Date()
+                });
+            }
         }
 
-        const target = await collection();
+        if (docsToInsert.length > 0) {
+            await target.insertMany(docsToInsert.map((doc) => ({ ...doc })));
 
-        await target.insertMany(docs.map((doc) => ({ ...doc })));
-
-        inserted.push({ target, ids: docs.map((doc) => doc.Id) });
+            inserted.push({ target, routeId, ids: docsToInsert.map((doc) => doc.Id) });
+        }
     };
 
     try {
-        await insertAll(distanceFares, "fareDistance", payload.distanceFare, (fare) => ({
+        await saveAll(distanceFares, "fareDistance", payload.distanceFare, (fare) => ({
             Minkm: fare.minkm,
             Maxkm: fare.maxkm,
             StandardFare: fare.standardFare,
             OffPeakFare: fare.offPeakFare
         }));
 
-        await insertAll(flatFares, "fareFlat", payload.flatFares, (fare) => ({
+        await saveAll(flatFares, "fareFlat", payload.flatFares, (fare) => ({
             PassengerType: fare.passengerType,
             PassengerDescription: fare.passengerDescription,
             Local: fare.local,
@@ -95,7 +181,7 @@ const createBundle = async (payload) => {
             Status: fare.status
         }));
 
-        await insertAll(timeBasedFares, "fareTimeBased", payload.timeBasedFares, (fare) => ({
+        await saveAll(timeBasedFares, "fareTimeBased", payload.timeBasedFares, (fare) => ({
             Period: fare.period,
             StartWindow: fare.startWindow,
             EndWindow: fare.endWindow,
@@ -105,7 +191,7 @@ const createBundle = async (payload) => {
             Status: fare.status
         }));
 
-        await insertAll(farePasses, "farePasses", payload.passes, (pass) => ({
+        await saveAll(farePasses, "farePasses", payload.passes, (pass) => ({
             PassProduct: pass.passProduct,
             Tagline: pass.tagline,
             Price: pass.price,
@@ -114,7 +200,9 @@ const createBundle = async (payload) => {
             IsOn: pass.isOn
         }));
     } catch (error) {
-        await Promise.allSettled(inserted.map(({ target, ids }) => target.deleteMany({ Id: { $in: ids } })));
+        await Promise.allSettled(inserted.map(({ target, routeId, ids }) =>
+            target.deleteMany({ Id: { $in: ids }, RouteId: routeId })
+        ));
 
         throw error;
     }
@@ -133,6 +221,7 @@ const update = async (id, fare) => {
 module.exports = {
     getAll,
     create,
+    createDefaultFlatFares,
     createBundle,
     update
 };

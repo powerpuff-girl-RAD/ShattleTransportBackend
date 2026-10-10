@@ -107,10 +107,10 @@ const validateBoarding = async (userId, {
 
     // 2. PassengerAccount.getBalance(accountId)
     const account = await passengerRepository.getOrCreateAccount(userId);
-    const balance = Number(account.Balance || 0);
+    const isBookingToken = Boolean(token.IsBookingToken || tokenSerial.startsWith('TK-BK-'));
 
-    // Check balance sufficiency
-    if (balance < MINIMUM_BOARDING_BALANCE) {
+    // Check balance sufficiency (only required for regular transit card/wallet tokens; bookings are prepaid)
+    if (!isBookingToken && balance < MINIMUM_BOARDING_BALANCE) {
         await notificationRepository.createNotification({
             userId,
             type: 'InsufficientCredit',
@@ -126,6 +126,14 @@ const validateBoarding = async (userId, {
             tokenSerial,
             remainingBalance: balance,
         };
+    }
+
+    if (isBookingToken) {
+        const bookingsCol = await getCollection('bookings');
+        await bookingsCol.updateOne(
+            { TokenSerial: tokenSerial, UserId: Number(userId) },
+            { $set: { Status: 'InProgress', UpdatedAt: new Date().toISOString() } }
+        );
     }
 
     // 3. Resolve route & boarding stop details
@@ -166,6 +174,15 @@ const validateBoarding = async (userId, {
     // Mark token used
     await tokenRepository.markTokenUsed(tokenSerial);
 
+    // If booking token, mark booking as InProgress
+    if (tokenSerial && tokenSerial.startsWith('TK-BK-')) {
+        const bookingsCol = await getCollection('bookings');
+        await bookingsCol.updateOne(
+            { TokenSerial: tokenSerial, UserId: Number(userId) },
+            { $set: { Status: 'InProgress', UpdatedAt: new Date().toISOString() } }
+        );
+    }
+
     // 5. NotificationService.sendScanConfirmation()
     await notificationRepository.createNotification({
         userId,
@@ -184,16 +201,7 @@ const validateBoarding = async (userId, {
 
     return {
         status: 'Accepted',
-        journey: {
-            id: journey.Id,
-            tokenSerial,
-            routeId: journey.RouteId,
-            routeNumber,
-            routeName,
-            boardingStop: journey.BoardingStop,
-            tapInTime: journey.BoardingStop.Timestamp,
-            status: 'InProgress',
-        },
+        journey: formatJourney(journey),
         tokenSerial,
         balance,
         message: 'Tapped in — boarding Accepted',
@@ -236,22 +244,55 @@ const validateAlighting = async (userId, {
     const boardingKm = Number(activeJourney.BoardingStop.DistanceFromStartKm || 0);
     const distanceTraveled = Math.max(1, Math.abs(alightingKm - boardingKm));
 
-    // 3. Calculate fare
-    const fareResult = await calculateFare(distanceTraveled, isPeak);
-    const fareAmount = fareResult.fareAmount;
+    // 3. Determine fare to deduct (at tap-out time)
+    const isBookingToken = Boolean(activeJourney?.TokenSerial?.startsWith('TK-BK-'));
+    let fareToDeduct = 0;
+    let bookedBooking = null;
 
-    // 4. Deduct fare from PassengerAccount
+    if (isBookingToken) {
+        const bookingsCol = await getCollection('bookings');
+        bookedBooking = await bookingsCol.findOne(
+            { TokenSerial: activeJourney.TokenSerial, UserId: Number(userId) },
+            NO_ID
+        );
+        if (bookedBooking && typeof bookedBooking.FareAmount === 'number') {
+            fareToDeduct = bookedBooking.FareAmount;
+        } else {
+            const fareResult = await calculateFare(distanceTraveled, isPeak);
+            fareToDeduct = fareResult.fareAmount;
+        }
+    } else {
+        const fareResult = await calculateFare(distanceTraveled, isPeak);
+        fareToDeduct = fareResult.fareAmount;
+    }
+
+    // 4. Deduct fare from PassengerAccount on tap-out
     const accountsCol = await getCollection('passengerAccounts');
-    const beforeAccount = await accountsCol.findOneAndUpdate(
+    const updatedAccount = await accountsCol.findOneAndUpdate(
         { UserId: Number(userId) },
-        { $inc: { Balance: -fareAmount } },
-        { ...NO_ID, returnDocument: 'before' }
+        { $inc: { Balance: -fareToDeduct } },
+        { ...NO_ID, returnDocument: 'after' }
     );
 
-    const prevBalance = Number(beforeAccount?.Balance || 0);
-    const newBalance  = Math.round((prevBalance - fareAmount) * 100) / 100;
+    const newBalance = Math.round(Number(updatedAccount?.Balance || 0) * 100) / 100;
 
-    // 5. Complete journey record
+    // 5. Update booking status to Completed & Paid
+    if (isBookingToken) {
+        const bookingsCol = await getCollection('bookings');
+        await bookingsCol.updateOne(
+            { TokenSerial: activeJourney.TokenSerial, UserId: Number(userId) },
+            {
+                $set: {
+                    Status: 'Completed',
+                    PaymentStatus: 'Paid',
+                    CompletedAt: new Date().toISOString(),
+                    UpdatedAt: new Date().toISOString(),
+                },
+            }
+        );
+    }
+
+    // 6. Complete journey record
     const alightingStopObj = {
         stopId: alightingStopId || 2,
         stopName: alightingStopName || route?.EndLocation || 'Colombo Fort',
@@ -263,27 +304,27 @@ const validateAlighting = async (userId, {
         userId,
         alightingStop: alightingStopObj,
         distanceKm: distanceTraveled,
-        fareAmount,
+        fareAmount: fareToDeduct,
     });
 
     // Mark token used
     await tokenRepository.markTokenUsed(activeJourney.TokenSerial);
 
-    // 6. NotificationService.sendFareDeductionNotification(fareAmount)
+    // 7. NotificationService.sendFareDeductionNotification(fareToDeduct)
     await notificationRepository.createNotification({
         userId,
         type: 'FareDeduction',
-        title: `Fare deducted: Rs. ${fareAmount.toFixed(2)}`,
-        message: `LKR ${fareAmount.toFixed(2)} deducted from your wallet for trip from ${activeJourney.BoardingStop.StopName} to ${alightingStopObj.stopName}.`,
+        title: `Fare deducted on tap-out: Rs. ${fareToDeduct.toFixed(2)}`,
+        message: `LKR ${fareToDeduct.toFixed(2)} deducted from your wallet upon alighting at ${alightingStopObj.stopName}. New balance: LKR ${newBalance.toFixed(2)}.`,
         data: {
             journeyId: activeJourney.Id,
-            fareAmount,
+            fareAmount: fareToDeduct,
             distanceKm: distanceTraveled,
             newBalance,
         },
     });
 
-    // 7. NotificationService.sendJourneyCompletionConfirmation()
+    // 8. NotificationService.sendJourneyCompletionConfirmation()
     await notificationRepository.createNotification({
         userId,
         type: 'JourneyCompletion',
@@ -297,7 +338,7 @@ const validateAlighting = async (userId, {
         },
     });
 
-    // 8. opt [newBalance < lowBalanceThreshold] -> sendLowBalanceNotification()
+    // 9. opt [newBalance < lowBalanceThreshold] -> sendLowBalanceNotification()
     const isLowBalance = newBalance < LOW_BALANCE_THRESHOLD;
     if (isLowBalance) {
         await notificationRepository.createNotification({
@@ -311,11 +352,71 @@ const validateAlighting = async (userId, {
 
     return {
         status: 'Completed',
-        journey: completedJourney,
-        fareDeducted: fareAmount,
+        journey: formatJourney(completedJourney),
+        fareDeducted: fareToDeduct,
         newBalance,
         lowBalanceWarning: isLowBalance,
-        message: 'Tapped out — Journey Completed',
+        message: `Tapped out — Journey Completed (LKR ${fareToDeduct.toFixed(2)} deducted)`,
+    };
+};
+
+/**
+ * Formats a journey document for consistent API response.
+ * Normalizes both camelCase and PascalCase fields to prevent undefined errors.
+ */
+const formatJourney = (j) => {
+    if (!j) return null;
+    const bStop = j.BoardingStop || j.boardingStop || {};
+    const aStop = j.AlightingStop || j.alightingStop || null;
+
+    const boardingStopObj = {
+        stopId: bStop.StopId ?? bStop.stopId,
+        stopName: bStop.StopName ?? bStop.stopName ?? 'Origin Stop',
+        distanceFromStartKm: bStop.DistanceFromStartKm ?? bStop.distanceFromStartKm ?? 0,
+        timestamp: bStop.Timestamp ?? bStop.timestamp,
+        StopId: bStop.StopId ?? bStop.stopId,
+        StopName: bStop.StopName ?? bStop.stopName ?? 'Origin Stop',
+        DistanceFromStartKm: bStop.DistanceFromStartKm ?? bStop.distanceFromStartKm ?? 0,
+    };
+
+    const alightingStopObj = aStop ? {
+        stopId: aStop.StopId ?? aStop.stopId,
+        stopName: aStop.StopName ?? aStop.stopName ?? 'Destination Stop',
+        distanceFromStartKm: aStop.DistanceFromStartKm ?? aStop.distanceFromStartKm ?? 0,
+        timestamp: aStop.Timestamp ?? aStop.timestamp,
+        StopId: aStop.StopId ?? aStop.stopId,
+        StopName: aStop.StopName ?? aStop.stopName ?? 'Destination Stop',
+        DistanceFromStartKm: aStop.DistanceFromStartKm ?? aStop.distanceFromStartKm ?? 0,
+    } : null;
+
+    return {
+        id: j.Id ?? j.id,
+        Id: j.Id ?? j.id,
+        userId: j.UserId ?? j.userId,
+        UserId: j.UserId ?? j.userId,
+        tokenSerial: j.TokenSerial ?? j.tokenSerial,
+        TokenSerial: j.TokenSerial ?? j.tokenSerial,
+        routeId: j.RouteId ?? j.routeId,
+        RouteId: j.RouteId ?? j.routeId,
+        routeNumber: j.RouteNumber ?? j.routeNumber ?? '',
+        RouteNumber: j.RouteNumber ?? j.routeNumber ?? '',
+        routeName: j.RouteName ?? j.routeName ?? '',
+        RouteName: j.RouteName ?? j.routeName ?? '',
+        boardingStop: boardingStopObj,
+        BoardingStop: boardingStopObj,
+        alightingStop: alightingStopObj,
+        AlightingStop: alightingStopObj,
+        distanceKm: j.DistanceKm ?? j.distanceKm ?? 0,
+        DistanceKm: j.DistanceKm ?? j.distanceKm ?? 0,
+        fareAmount: j.FareAmount ?? j.fareAmount ?? 0,
+        FareAmount: j.FareAmount ?? j.fareAmount ?? 0,
+        status: j.Status ?? j.status ?? 'InProgress',
+        Status: j.Status ?? j.status ?? 'InProgress',
+        paidFrom: j.PaidFrom ?? j.paidFrom ?? 'Wallet',
+        createdAt: j.CreatedAt ?? j.createdAt ?? new Date().toISOString(),
+        CreatedAt: j.CreatedAt ?? j.createdAt ?? new Date().toISOString(),
+        completedAt: j.CompletedAt ?? j.completedAt ?? null,
+        CompletedAt: j.CompletedAt ?? j.completedAt ?? null,
     };
 };
 
@@ -323,7 +424,8 @@ const validateAlighting = async (userId, {
  * Gets passenger active journey.
  */
 const getActiveJourney = async (userId) => {
-    return journeyRepository.getActiveJourney(userId);
+    const raw = await journeyRepository.getActiveJourney(userId);
+    return formatJourney(raw);
 };
 
 /**

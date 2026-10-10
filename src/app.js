@@ -13,6 +13,7 @@ const fareRoutes = require("./routes/fare.routes");
 const passengerRoutes = require("./routes/passenger.routes");
 const tokenRoutes = require("./routes/token.routes");
 const journeyRoutes = require("./routes/journey.routes");
+const bookingRoutes = require("./routes/booking.routes");
 
 const { errorHandler } = require("./middleware/error.middleware");
 
@@ -84,6 +85,11 @@ app.use(
 app.use(
     "/api/journey",
     journeyRoutes
+);
+
+app.use(
+    "/api/booking",
+    bookingRoutes
 );
 
 
