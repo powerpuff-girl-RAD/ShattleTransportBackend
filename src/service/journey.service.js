@@ -174,6 +174,15 @@ const validateBoarding = async (userId, {
     // Mark token used
     await tokenRepository.markTokenUsed(tokenSerial);
 
+    // If booking token, mark booking as InProgress
+    if (tokenSerial && tokenSerial.startsWith('TK-BK-')) {
+        const bookingsCol = await getCollection('bookings');
+        await bookingsCol.updateOne(
+            { TokenSerial: tokenSerial, UserId: Number(userId) },
+            { $set: { Status: 'InProgress', UpdatedAt: new Date().toISOString() } }
+        );
+    }
+
     // 5. NotificationService.sendScanConfirmation()
     await notificationRepository.createNotification({
         userId,
@@ -235,38 +244,55 @@ const validateAlighting = async (userId, {
     const boardingKm = Number(activeJourney.BoardingStop.DistanceFromStartKm || 0);
     const distanceTraveled = Math.max(1, Math.abs(alightingKm - boardingKm));
 
-    // 3. Calculate fare
-    const fareResult = await calculateFare(distanceTraveled, isPeak);
-    const calculatedFare = fareResult.fareAmount;
-
+    // 3. Determine fare to deduct (at tap-out time)
     const isBookingToken = Boolean(activeJourney?.TokenSerial?.startsWith('TK-BK-'));
-    const deduction = isBookingToken ? 0 : calculatedFare;
+    let fareToDeduct = 0;
+    let bookedBooking = null;
 
-    // 4. Deduct fare from PassengerAccount (prepaid booking journeys do not deduct again)
-    const accountsCol = await getCollection('passengerAccounts');
-    let beforeAccount = null;
-    if (deduction > 0) {
-        beforeAccount = await accountsCol.findOneAndUpdate(
-            { UserId: Number(userId) },
-            { $inc: { Balance: -deduction } },
-            { ...NO_ID, returnDocument: 'before' }
+    if (isBookingToken) {
+        const bookingsCol = await getCollection('bookings');
+        bookedBooking = await bookingsCol.findOne(
+            { TokenSerial: activeJourney.TokenSerial, UserId: Number(userId) },
+            NO_ID
         );
+        if (bookedBooking && typeof bookedBooking.FareAmount === 'number') {
+            fareToDeduct = bookedBooking.FareAmount;
+        } else {
+            const fareResult = await calculateFare(distanceTraveled, isPeak);
+            fareToDeduct = fareResult.fareAmount;
+        }
     } else {
-        beforeAccount = await accountsCol.findOne({ UserId: Number(userId) }, NO_ID);
+        const fareResult = await calculateFare(distanceTraveled, isPeak);
+        fareToDeduct = fareResult.fareAmount;
     }
 
-    const prevBalance = Number(beforeAccount?.Balance || 0);
-    const newBalance  = Math.round((prevBalance - deduction) * 100) / 100;
+    // 4. Deduct fare from PassengerAccount on tap-out
+    const accountsCol = await getCollection('passengerAccounts');
+    const updatedAccount = await accountsCol.findOneAndUpdate(
+        { UserId: Number(userId) },
+        { $inc: { Balance: -fareToDeduct } },
+        { ...NO_ID, returnDocument: 'after' }
+    );
 
+    const newBalance = Math.round(Number(updatedAccount?.Balance || 0) * 100) / 100;
+
+    // 5. Update booking status to Completed & Paid
     if (isBookingToken) {
         const bookingsCol = await getCollection('bookings');
         await bookingsCol.updateOne(
             { TokenSerial: activeJourney.TokenSerial, UserId: Number(userId) },
-            { $set: { Status: 'Completed', CompletedAt: new Date().toISOString(), UpdatedAt: new Date().toISOString() } }
+            {
+                $set: {
+                    Status: 'Completed',
+                    PaymentStatus: 'Paid',
+                    CompletedAt: new Date().toISOString(),
+                    UpdatedAt: new Date().toISOString(),
+                },
+            }
         );
     }
 
-    // 5. Complete journey record
+    // 6. Complete journey record
     const alightingStopObj = {
         stopId: alightingStopId || 2,
         stopName: alightingStopName || route?.EndLocation || 'Colombo Fort',
@@ -278,27 +304,27 @@ const validateAlighting = async (userId, {
         userId,
         alightingStop: alightingStopObj,
         distanceKm: distanceTraveled,
-        fareAmount,
+        fareAmount: fareToDeduct,
     });
 
     // Mark token used
     await tokenRepository.markTokenUsed(activeJourney.TokenSerial);
 
-    // 6. NotificationService.sendFareDeductionNotification(fareAmount)
+    // 7. NotificationService.sendFareDeductionNotification(fareToDeduct)
     await notificationRepository.createNotification({
         userId,
         type: 'FareDeduction',
-        title: `Fare deducted: Rs. ${fareAmount.toFixed(2)}`,
-        message: `LKR ${fareAmount.toFixed(2)} deducted from your wallet for trip from ${activeJourney.BoardingStop.StopName} to ${alightingStopObj.stopName}.`,
+        title: `Fare deducted on tap-out: Rs. ${fareToDeduct.toFixed(2)}`,
+        message: `LKR ${fareToDeduct.toFixed(2)} deducted from your wallet upon alighting at ${alightingStopObj.stopName}. New balance: LKR ${newBalance.toFixed(2)}.`,
         data: {
             journeyId: activeJourney.Id,
-            fareAmount,
+            fareAmount: fareToDeduct,
             distanceKm: distanceTraveled,
             newBalance,
         },
     });
 
-    // 7. NotificationService.sendJourneyCompletionConfirmation()
+    // 8. NotificationService.sendJourneyCompletionConfirmation()
     await notificationRepository.createNotification({
         userId,
         type: 'JourneyCompletion',
@@ -312,7 +338,7 @@ const validateAlighting = async (userId, {
         },
     });
 
-    // 8. opt [newBalance < lowBalanceThreshold] -> sendLowBalanceNotification()
+    // 9. opt [newBalance < lowBalanceThreshold] -> sendLowBalanceNotification()
     const isLowBalance = newBalance < LOW_BALANCE_THRESHOLD;
     if (isLowBalance) {
         await notificationRepository.createNotification({
@@ -327,10 +353,10 @@ const validateAlighting = async (userId, {
     return {
         status: 'Completed',
         journey: formatJourney(completedJourney),
-        fareDeducted: fareAmount,
+        fareDeducted: fareToDeduct,
         newBalance,
         lowBalanceWarning: isLowBalance,
-        message: 'Tapped out — Journey Completed',
+        message: `Tapped out — Journey Completed (LKR ${fareToDeduct.toFixed(2)} deducted)`,
     };
 };
 

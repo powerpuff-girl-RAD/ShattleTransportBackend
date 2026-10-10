@@ -238,10 +238,10 @@ const createBooking = async (userId, payload) => {
 
     const fareAmount = fareInfo.fareAmount;
 
-    // 4. Verify wallet balance
+    // 4. Verify wallet balance (verifies passenger has sufficient funds to travel)
     if (account.Balance < fareAmount) {
         const error = new Error(
-            `Insufficient wallet balance. Total fare is LKR ${fareAmount.toFixed(2)}, but your current balance is LKR ${account.Balance.toFixed(2)}. Please top up your wallet to continue.`
+            `Insufficient wallet balance. Total journey fare is LKR ${fareAmount.toFixed(2)}, but your current balance is LKR ${account.Balance.toFixed(2)}. Please top up your wallet to continue.`
         );
         error.statusCode = 400;
         error.code = 'ERR-BK-INSUFFICIENT_BALANCE';
@@ -253,18 +253,9 @@ const createBooking = async (userId, payload) => {
         throw error;
     }
 
-    // 5. Deduct fare atomically from passenger account
-    const updatedAccount = await accountsCol.findOneAndUpdate(
-        { UserId: Number(userId), Balance: { $gte: fareAmount } },
-        { $inc: { Balance: -fareAmount } },
-        { ...NO_ID, returnDocument: 'after' }
-    );
-
-    if (!updatedAccount) {
-        const error = new Error('Account balance changed or insufficient during transaction');
-        error.statusCode = 400;
-        throw error;
-    }
+    // 5. Booking reservation - Note: Fare is NOT charged at booking time.
+    // It is debited from passenger account on tap-out time.
+    const currentBalance = Number(account.Balance || 0);
 
     // 6. Generate isolated Booking Reference and Token Serial
     const dateCompact = (schedule.Date || new Date().toISOString().split('T')[0]).replace(/-/g, '');
@@ -305,6 +296,7 @@ const createBooking = async (userId, payload) => {
         BaseUnitFare: fareInfo.adultFareUnit,
         UnitFare: fareInfo.adultFareUnit,
         FareAmount: fareAmount,
+        PaymentStatus: 'PendingTapOut', // Fare debited at tap-out
         IsPeak: fareInfo.isPeak,
         PassType: null, // Pending pass type selection
         TokenSerial: tokenSerial,
@@ -325,7 +317,7 @@ const createBooking = async (userId, payload) => {
         userId: Number(userId),
         type: 'BoardingConfirmation',
         title: `Journey Booked: Route ${route.RouteNumber}`,
-        message: `Your trip for ${passengerSummaryStr} from ${fareInfo.boardingStop.StopName} to ${fareInfo.alightingStop.StopName} on ${schedule.Date} (${timeSlotStr}) is booked. Total Fare: LKR ${fareAmount.toFixed(2)}.`,
+        message: `Reserved trip for ${passengerSummaryStr} from ${fareInfo.boardingStop.StopName} to ${fareInfo.alightingStop.StopName} on ${schedule.Date} (${timeSlotStr}). Fare of LKR ${fareAmount.toFixed(2)} will be debited upon tap-out.`,
         data: {
             bookingId: newBooking.Id,
             bookingRef: newBooking.BookingRef,
@@ -334,12 +326,14 @@ const createBooking = async (userId, payload) => {
             adultCount: fareInfo.adultCount,
             minorCount: fareInfo.minorCount,
             passengerCount: fareInfo.passengerCount,
+            paymentStatus: 'PendingTapOut',
+            currentBalance,
         },
     });
 
     return {
         booking: newBooking,
-        newBalance: updatedAccount.Balance,
+        newBalance: currentBalance,
     };
 };
 
@@ -484,18 +478,27 @@ const cancelBooking = async (userId, bookingId) => {
         throw error;
     }
 
-    // Refund fare back to passenger account
+    // Check if fare was already paid (e.g. legacy) vs pay-at-tapout
     const accountsCol = await getCollection('passengerAccounts');
-    const updatedAccount = await accountsCol.findOneAndUpdate(
-        { UserId: Number(userId) },
-        { $inc: { Balance: booking.FareAmount } },
-        { ...NO_ID, returnDocument: 'after' }
-    );
+    let updatedAccount = null;
+    let wasRefunded = false;
+
+    if (booking.PaymentStatus === 'Paid') {
+        updatedAccount = await accountsCol.findOneAndUpdate(
+            { UserId: Number(userId) },
+            { $inc: { Balance: booking.FareAmount } },
+            { ...NO_ID, returnDocument: 'after' }
+        );
+        wasRefunded = true;
+    } else {
+        updatedAccount = await accountsCol.findOne({ UserId: Number(userId) }, NO_ID);
+    }
 
     // Update booking status
     const updatedBooking = await bookingRepository.updateBooking(booking.Id, {
         Status: 'Cancelled',
         TokenStatus: 'Cancelled',
+        PaymentStatus: 'Cancelled',
         CancelledAt: new Date().toISOString(),
     });
 
@@ -506,23 +509,27 @@ const cancelBooking = async (userId, bookingId) => {
         { $set: { Status: 'Deactivated', UpdatedAt: new Date().toISOString() } }
     );
 
-    // Send refund notification
+    // Send cancellation notification
     await notificationRepository.createNotification({
         userId: Number(userId),
-        type: 'FareDeduction',
-        title: `Booking Cancelled & Refunded`,
-        message: `Booking ${booking.BookingRef} was cancelled. LKR ${booking.FareAmount.toFixed(2)} has been refunded to your wallet.`,
+        type: 'BoardingConfirmation',
+        title: `Booking Cancelled: #${booking.BookingRef}`,
+        message: wasRefunded
+            ? `Booking ${booking.BookingRef} was cancelled. LKR ${booking.FareAmount.toFixed(2)} refunded to your wallet.`
+            : `Booking ${booking.BookingRef} was cancelled. No fare was debited since payment is collected at tap-out.`,
         data: {
             bookingId: booking.Id,
-            refundedAmount: booking.FareAmount,
+            refundedAmount: wasRefunded ? booking.FareAmount : 0,
             newBalance: updatedAccount?.Balance,
         },
     });
 
     return {
-        message: 'Booking cancelled successfully and fare refunded to wallet',
+        message: wasRefunded
+            ? 'Booking cancelled successfully and fare refunded to wallet'
+            : 'Booking cancelled successfully. No fare was charged.',
         booking: updatedBooking,
-        refundedAmount: booking.FareAmount,
+        refundedAmount: wasRefunded ? booking.FareAmount : 0,
         newBalance: updatedAccount?.Balance,
     };
 };
