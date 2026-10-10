@@ -5,6 +5,8 @@
 // Modifiability (Lecture 7, "localize changes"): to add a new rule, add one
 // object to this array. Nothing else in the system has to change.
 
+const isBookingToken = (token) => Boolean(token.IsBookingToken || String(token.TokenSerial).startsWith("TK-BK-"));
+
 const checks = [
     {
         name: "Token recognised",
@@ -43,8 +45,10 @@ const checks = [
         }
     },
     {
+        // Booking tokens are reserved in advance, so boarding doesn't require credit
+        // (same rule as journey.service validateBoarding)
         name: "Sufficient credit",
-        run: ({ token }) => Number(token.Balance) > 0 ? null : {
+        run: ({ token }) => isBookingToken(token) || Number(token.Balance) > 0 ? null : {
             reason: "Insufficient Credit",
             message: "The account has no credit for this journey"
         }

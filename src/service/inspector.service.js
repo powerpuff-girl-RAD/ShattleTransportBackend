@@ -61,7 +61,8 @@ const daysSince = (from) => {
     return days;
 };
 
-// QR codes carry a short-lived signed JWT (made by token.service generateQR).
+// QR codes carry a signed JWT: wallet tokens (token.service generateQR) use
+// `serial`, booking tokens (booking.service activateBookingToken) use `tokenSerial`.
 // Smartcards / barcodes are typed in by the inspector as a plain serial.
 const resolveSerial = ({ qrPayload, tokenSerial }) => {
 
@@ -71,7 +72,8 @@ const resolveSerial = ({ qrPayload, tokenSerial }) => {
 
     try {
         const decoded = jwt.verify(qrPayload, env.jwt.qrSecret);
-        return { serial: decoded.serial };
+        const serial = decoded.serial || decoded.tokenSerial;
+        return serial ? { serial } : { serial: null, qrError: "This QR code is not a passenger token" };
     } catch {
         return { serial: null, qrError: "QR code is invalid or has expired. Ask the passenger to refresh it." };
     }
