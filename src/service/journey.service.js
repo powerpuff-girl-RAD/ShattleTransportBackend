@@ -107,10 +107,10 @@ const validateBoarding = async (userId, {
 
     // 2. PassengerAccount.getBalance(accountId)
     const account = await passengerRepository.getOrCreateAccount(userId);
-    const balance = Number(account.Balance || 0);
+    const isBookingToken = Boolean(token.IsBookingToken || tokenSerial.startsWith('TK-BK-'));
 
-    // Check balance sufficiency
-    if (balance < MINIMUM_BOARDING_BALANCE) {
+    // Check balance sufficiency (only required for regular transit card/wallet tokens; bookings are prepaid)
+    if (!isBookingToken && balance < MINIMUM_BOARDING_BALANCE) {
         await notificationRepository.createNotification({
             userId,
             type: 'InsufficientCredit',
@@ -126,6 +126,14 @@ const validateBoarding = async (userId, {
             tokenSerial,
             remainingBalance: balance,
         };
+    }
+
+    if (isBookingToken) {
+        const bookingsCol = await getCollection('bookings');
+        await bookingsCol.updateOne(
+            { TokenSerial: tokenSerial, UserId: Number(userId) },
+            { $set: { Status: 'InProgress', UpdatedAt: new Date().toISOString() } }
+        );
     }
 
     // 3. Resolve route & boarding stop details
@@ -238,18 +246,34 @@ const validateAlighting = async (userId, {
 
     // 3. Calculate fare
     const fareResult = await calculateFare(distanceTraveled, isPeak);
-    const fareAmount = fareResult.fareAmount;
+    const calculatedFare = fareResult.fareAmount;
 
-    // 4. Deduct fare from PassengerAccount
+    const isBookingToken = Boolean(activeJourney?.TokenSerial?.startsWith('TK-BK-'));
+    const deduction = isBookingToken ? 0 : calculatedFare;
+
+    // 4. Deduct fare from PassengerAccount (prepaid booking journeys do not deduct again)
     const accountsCol = await getCollection('passengerAccounts');
-    const beforeAccount = await accountsCol.findOneAndUpdate(
-        { UserId: Number(userId) },
-        { $inc: { Balance: -fareAmount } },
-        { ...NO_ID, returnDocument: 'before' }
-    );
+    let beforeAccount = null;
+    if (deduction > 0) {
+        beforeAccount = await accountsCol.findOneAndUpdate(
+            { UserId: Number(userId) },
+            { $inc: { Balance: -deduction } },
+            { ...NO_ID, returnDocument: 'before' }
+        );
+    } else {
+        beforeAccount = await accountsCol.findOne({ UserId: Number(userId) }, NO_ID);
+    }
 
     const prevBalance = Number(beforeAccount?.Balance || 0);
-    const newBalance  = Math.round((prevBalance - fareAmount) * 100) / 100;
+    const newBalance  = Math.round((prevBalance - deduction) * 100) / 100;
+
+    if (isBookingToken) {
+        const bookingsCol = await getCollection('bookings');
+        await bookingsCol.updateOne(
+            { TokenSerial: activeJourney.TokenSerial, UserId: Number(userId) },
+            { $set: { Status: 'Completed', CompletedAt: new Date().toISOString(), UpdatedAt: new Date().toISOString() } }
+        );
+    }
 
     // 5. Complete journey record
     const alightingStopObj = {
