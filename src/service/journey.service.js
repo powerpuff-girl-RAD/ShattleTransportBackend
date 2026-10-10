@@ -192,16 +192,7 @@ const validateBoarding = async (userId, {
 
     return {
         status: 'Accepted',
-        journey: {
-            id: journey.Id,
-            tokenSerial,
-            routeId: journey.RouteId,
-            routeNumber,
-            routeName,
-            boardingStop: journey.BoardingStop,
-            tapInTime: journey.BoardingStop.Timestamp,
-            status: 'InProgress',
-        },
+        journey: formatJourney(journey),
         tokenSerial,
         balance,
         message: 'Tapped in — boarding Accepted',
@@ -335,7 +326,7 @@ const validateAlighting = async (userId, {
 
     return {
         status: 'Completed',
-        journey: completedJourney,
+        journey: formatJourney(completedJourney),
         fareDeducted: fareAmount,
         newBalance,
         lowBalanceWarning: isLowBalance,
@@ -344,10 +335,71 @@ const validateAlighting = async (userId, {
 };
 
 /**
+ * Formats a journey document for consistent API response.
+ * Normalizes both camelCase and PascalCase fields to prevent undefined errors.
+ */
+const formatJourney = (j) => {
+    if (!j) return null;
+    const bStop = j.BoardingStop || j.boardingStop || {};
+    const aStop = j.AlightingStop || j.alightingStop || null;
+
+    const boardingStopObj = {
+        stopId: bStop.StopId ?? bStop.stopId,
+        stopName: bStop.StopName ?? bStop.stopName ?? 'Origin Stop',
+        distanceFromStartKm: bStop.DistanceFromStartKm ?? bStop.distanceFromStartKm ?? 0,
+        timestamp: bStop.Timestamp ?? bStop.timestamp,
+        StopId: bStop.StopId ?? bStop.stopId,
+        StopName: bStop.StopName ?? bStop.stopName ?? 'Origin Stop',
+        DistanceFromStartKm: bStop.DistanceFromStartKm ?? bStop.distanceFromStartKm ?? 0,
+    };
+
+    const alightingStopObj = aStop ? {
+        stopId: aStop.StopId ?? aStop.stopId,
+        stopName: aStop.StopName ?? aStop.stopName ?? 'Destination Stop',
+        distanceFromStartKm: aStop.DistanceFromStartKm ?? aStop.distanceFromStartKm ?? 0,
+        timestamp: aStop.Timestamp ?? aStop.timestamp,
+        StopId: aStop.StopId ?? aStop.stopId,
+        StopName: aStop.StopName ?? aStop.stopName ?? 'Destination Stop',
+        DistanceFromStartKm: aStop.DistanceFromStartKm ?? aStop.distanceFromStartKm ?? 0,
+    } : null;
+
+    return {
+        id: j.Id ?? j.id,
+        Id: j.Id ?? j.id,
+        userId: j.UserId ?? j.userId,
+        UserId: j.UserId ?? j.userId,
+        tokenSerial: j.TokenSerial ?? j.tokenSerial,
+        TokenSerial: j.TokenSerial ?? j.tokenSerial,
+        routeId: j.RouteId ?? j.routeId,
+        RouteId: j.RouteId ?? j.routeId,
+        routeNumber: j.RouteNumber ?? j.routeNumber ?? '',
+        RouteNumber: j.RouteNumber ?? j.routeNumber ?? '',
+        routeName: j.RouteName ?? j.routeName ?? '',
+        RouteName: j.RouteName ?? j.routeName ?? '',
+        boardingStop: boardingStopObj,
+        BoardingStop: boardingStopObj,
+        alightingStop: alightingStopObj,
+        AlightingStop: alightingStopObj,
+        distanceKm: j.DistanceKm ?? j.distanceKm ?? 0,
+        DistanceKm: j.DistanceKm ?? j.distanceKm ?? 0,
+        fareAmount: j.FareAmount ?? j.fareAmount ?? 0,
+        FareAmount: j.FareAmount ?? j.fareAmount ?? 0,
+        status: j.Status ?? j.status ?? 'InProgress',
+        Status: j.Status ?? j.status ?? 'InProgress',
+        paidFrom: j.PaidFrom ?? j.paidFrom ?? 'Wallet',
+        createdAt: j.CreatedAt ?? j.createdAt ?? new Date().toISOString(),
+        CreatedAt: j.CreatedAt ?? j.createdAt ?? new Date().toISOString(),
+        completedAt: j.CompletedAt ?? j.completedAt ?? null,
+        CompletedAt: j.CompletedAt ?? j.completedAt ?? null,
+    };
+};
+
+/**
  * Gets passenger active journey.
  */
 const getActiveJourney = async (userId) => {
-    return journeyRepository.getActiveJourney(userId);
+    const raw = await journeyRepository.getActiveJourney(userId);
+    return formatJourney(raw);
 };
 
 /**

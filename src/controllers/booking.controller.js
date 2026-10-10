@@ -1,4 +1,4 @@
-﻿const bookingService = require('../service/booking.service');
+const bookingService = require('../service/booking.service');
 
 /**
  * GET /api/booking/routes?date=YYYY-MM-DD
@@ -35,12 +35,25 @@ const getRouteDetails = async (req, res, next) => {
  */
 const calculateFare = async (req, res, next) => {
     try {
-        const { routeId, boardingStopId, alightingStopId, isPeak } = req.body;
+        const {
+            routeId,
+            boardingStopId,
+            alightingStopId,
+            isPeak,
+            adultCount,
+            minorCount,
+            passengerCount,
+            passengerType,
+        } = req.body;
         const result = await bookingService.calculateBookingFare({
             routeId,
             boardingStopId,
             alightingStopId,
             isPeak,
+            adultCount,
+            minorCount,
+            passengerCount,
+            passengerType,
         });
         res.status(200).json({ success: true, data: result });
     } catch (error) {

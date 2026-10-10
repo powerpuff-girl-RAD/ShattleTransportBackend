@@ -1,4 +1,4 @@
-﻿const crypto = require('crypto');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
 const env = require('../config/env');
@@ -78,8 +78,39 @@ const getRouteBookingDetails = async (routeId, date) => {
 
 /**
  * 3. Calculates the fare for a trip on a route between boarding and alighting stops.
+ * Supports separate adultCount and minorCount.
+ * Adult pays 100% standard fare; Minor gets 50% concession.
  */
-const calculateBookingFare = async ({ routeId, boardingStopId, alightingStopId, isPeak = true }) => {
+const calculateBookingFare = async ({
+    routeId,
+    boardingStopId,
+    alightingStopId,
+    isPeak = true,
+    adultCount = 1,
+    minorCount = 0,
+    // backwards-compatibility support
+    passengerCount,
+    passengerType,
+}) => {
+    let adults = parseInt(adultCount, 10);
+    let minors = parseInt(minorCount, 10);
+
+    // If caller passed legacy single count & type
+    if (isNaN(adults) || adults < 0) {
+        if (passengerType === 'Minor') {
+            adults = 0;
+            minors = Math.max(1, parseInt(passengerCount, 10) || 1);
+        } else {
+            adults = Math.max(1, parseInt(passengerCount, 10) || 1);
+            minors = 0;
+        }
+    } else {
+        if (isNaN(minors) || minors < 0) minors = 0;
+        if (adults === 0 && minors === 0) adults = 1;
+    }
+
+    const totalPassengerCount = adults + minors;
+
     const routesCol = await getCollection('routes');
     const route = await routesCol.findOne({ Id: Number(routeId) }, NO_ID);
     if (!route) {
@@ -109,6 +140,10 @@ const calculateBookingFare = async ({ routeId, boardingStopId, alightingStopId, 
     const distanceKm = Math.max(1, Math.abs(aKm - bKm));
 
     const fareCalc = await calculateFare(distanceKm, isPeak);
+    const adultFareUnit = Math.round(fareCalc.fareAmount * 100) / 100;
+    const minorFareUnit = Math.round((fareCalc.fareAmount * 0.5) * 100) / 100;
+
+    const totalFare = Math.round((adults * adultFareUnit + minors * minorFareUnit) * 100) / 100;
 
     return {
         routeId: route.Id,
@@ -117,14 +152,19 @@ const calculateBookingFare = async ({ routeId, boardingStopId, alightingStopId, 
         boardingStop: bStop,
         alightingStop: aStop,
         distanceKm,
-        fareAmount: fareCalc.fareAmount,
+        adultCount: adults,
+        minorCount: minors,
+        adultFareUnit,
+        minorFareUnit,
+        passengerCount: totalPassengerCount,
+        fareAmount: totalFare,
         isPeak: fareCalc.isPeak,
     };
 };
 
 /**
  * 4. Creates a new journey booking.
- * - Calculates fare
+ * - Calculates fare based on adultCount and minorCount
  * - Checks passenger wallet balance
  * - Deducts fare atomically
  * - Generates unique booking ref & token serial
@@ -137,6 +177,11 @@ const createBooking = async (userId, payload) => {
         boardingStopId,
         alightingStopId,
         isPeak = true,
+        adultCount = 1,
+        minorCount = 0,
+        // legacy
+        passengerCount,
+        passengerType,
     } = payload;
 
     if (!routeId || !scheduleId || !boardingStopId || !alightingStopId) {
@@ -185,6 +230,10 @@ const createBooking = async (userId, payload) => {
         boardingStopId,
         alightingStopId,
         isPeak,
+        adultCount,
+        minorCount,
+        passengerCount,
+        passengerType,
     });
 
     const fareAmount = fareInfo.fareAmount;
@@ -247,6 +296,14 @@ const createBooking = async (userId, payload) => {
             DistanceFromStartKm: fareInfo.alightingStop.DistanceFromStartKm,
         },
         DistanceKm: fareInfo.distanceKm,
+        AdultCount: fareInfo.adultCount,
+        MinorCount: fareInfo.minorCount,
+        PassengerCount: fareInfo.passengerCount,
+        PassengerType: fareInfo.minorCount > 0 ? (fareInfo.adultCount > 0 ? 'Mixed' : 'Minor') : 'Adult',
+        AdultFareUnit: fareInfo.adultFareUnit,
+        MinorFareUnit: fareInfo.minorFareUnit,
+        BaseUnitFare: fareInfo.adultFareUnit,
+        UnitFare: fareInfo.adultFareUnit,
         FareAmount: fareAmount,
         IsPeak: fareInfo.isPeak,
         PassType: null, // Pending pass type selection
@@ -258,17 +315,25 @@ const createBooking = async (userId, payload) => {
 
     const newBooking = await bookingRepository.createBooking(bookingDoc);
 
+    const passengerSummaryStr = [
+        fareInfo.adultCount > 0 ? `${fareInfo.adultCount} Adult(s)` : null,
+        fareInfo.minorCount > 0 ? `${fareInfo.minorCount} Minor(s)` : null,
+    ].filter(Boolean).join(' + ') || '1 Adult';
+
     // 8. Trigger booking confirmation notification
     await notificationRepository.createNotification({
         userId: Number(userId),
         type: 'BoardingConfirmation',
         title: `Journey Booked: Route ${route.RouteNumber}`,
-        message: `Your trip from ${fareInfo.boardingStop.StopName} to ${fareInfo.alightingStop.StopName} on ${schedule.Date} (${timeSlotStr}) is booked. Fare: LKR ${fareAmount.toFixed(2)}.`,
+        message: `Your trip for ${passengerSummaryStr} from ${fareInfo.boardingStop.StopName} to ${fareInfo.alightingStop.StopName} on ${schedule.Date} (${timeSlotStr}) is booked. Total Fare: LKR ${fareAmount.toFixed(2)}.`,
         data: {
             bookingId: newBooking.Id,
             bookingRef: newBooking.BookingRef,
             tokenSerial: newBooking.TokenSerial,
             fareAmount,
+            adultCount: fareInfo.adultCount,
+            minorCount: fareInfo.minorCount,
+            passengerCount: fareInfo.passengerCount,
         },
     });
 
@@ -318,6 +383,10 @@ const activateBookingToken = async (userId, bookingId, { passType = 'QR' }) => {
             alightingStop: booking.AlightingStop.StopName,
             scheduleDate: booking.ScheduleDate,
             timeSlot: booking.TimeSlot,
+            adultCount: booking.AdultCount ?? (booking.PassengerCount || 1),
+            minorCount: booking.MinorCount ?? 0,
+            passengerCount: booking.PassengerCount || 1,
+            passengerType: booking.PassengerType || 'Adult',
             fareAmount: booking.FareAmount,
             passType,
             nonce,
