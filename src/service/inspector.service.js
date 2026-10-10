@@ -70,13 +70,41 @@ const resolveSerial = ({ qrPayload, tokenSerial }) => {
         return { serial: String(tokenSerial).trim().toUpperCase() };
     }
 
+    const text = String(qrPayload).trim();
+
+    // 1. Signed QR (wallet token or activated booking) — the signature proves the app made it
     try {
-        const decoded = jwt.verify(qrPayload, env.jwt.qrSecret);
+        const decoded = jwt.verify(text, env.jwt.qrSecret);
         const serial = decoded.serial || decoded.tokenSerial;
         return serial ? { serial } : { serial: null, qrError: "This QR code is not a passenger token" };
-    } catch {
-        return { serial: null, qrError: "QR code is invalid or has expired. Ask the passenger to refresh it." };
+    } catch (error) {
+        if (error.name === "TokenExpiredError") {
+            return { serial: null, qrError: "This QR code has expired. Ask the passenger to refresh it." };
+        }
+        if (error.name === "JsonWebTokenError" && text.split(".").length === 3) {
+            return { serial: null, qrError: "This QR code was not issued by Shattle Transport" };
+        }
+        // Not a JWT at all: try the other formats below
     }
+
+    // 2. Booking QR shown before the booking is activated: plain JSON with tokenSerial.
+    //    It isn't signed, so it is trusted no more than a typed serial — the database
+    //    checks (token status, boarding scan, route) still decide the result.
+    try {
+        const data = JSON.parse(text);
+        if (data && data.tokenSerial) {
+            return { serial: String(data.tokenSerial).trim().toUpperCase() };
+        }
+    } catch {
+        // not JSON
+    }
+
+    // 3. A bare serial (e.g. a printed barcode ticket that says "TK-2625")
+    if (/^TK-[A-Z0-9-]+$/i.test(text)) {
+        return { serial: text.toUpperCase() };
+    }
+
+    return { serial: null, qrError: "This QR code is not a Shattle passenger token" };
 };
 
 
