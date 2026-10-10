@@ -107,6 +107,7 @@ const validateBoarding = async (userId, {
 
     // 2. PassengerAccount.getBalance(accountId)
     const account = await passengerRepository.getOrCreateAccount(userId);
+    const balance = Number(account.Balance || 0);
     const isBookingToken = Boolean(token.IsBookingToken || tokenSerial.startsWith('TK-BK-'));
 
     // Check balance sufficiency (only required for regular transit card/wallet tokens; bookings are prepaid)
