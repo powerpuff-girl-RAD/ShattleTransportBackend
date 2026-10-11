@@ -362,38 +362,17 @@ const activateBookingToken = async (userId, bookingId, { passType = 'QR' }) => {
         throw error;
     }
 
-    // Generate isolated signed QR JWT containing full booking metadata
-    const nonce = crypto.randomBytes(8).toString('hex');
-    const qrJwt = jwt.sign(
-        {
-            bookingId: booking.Id,
-            bookingRef: booking.BookingRef,
-            tokenSerial: booking.TokenSerial,
-            userId: Number(userId),
-            routeId: booking.RouteId,
-            routeNumber: booking.RouteNumber,
-            routeName: booking.RouteName,
-            boardingStop: booking.BoardingStop.StopName,
-            alightingStop: booking.AlightingStop.StopName,
-            scheduleDate: booking.ScheduleDate,
-            timeSlot: booking.TimeSlot,
-            adultCount: booking.AdultCount ?? (booking.PassengerCount || 1),
-            minorCount: booking.MinorCount ?? 0,
-            passengerCount: booking.PassengerCount || 1,
-            passengerType: booking.PassengerType || 'Adult',
-            fareAmount: booking.FareAmount,
-            passType,
-            nonce,
-        },
-        env.jwt.qrSecret,
-        { expiresIn: '7d' } // Valid for the scheduled travel window
-    );
+    // Generate QR payload containing ONLY booking token and userId
+    const qrPayload = JSON.stringify({
+        bookingToken: booking.TokenSerial,
+        userId: Number(userId),
+    });
 
     // Update booking document
     const updatedBooking = await bookingRepository.updateBooking(booking.Id, {
         PassType: passType,
         TokenStatus: 'Active',
-        QrPayload: qrJwt,
+        QrPayload: qrPayload,
         TokenActivatedAt: new Date().toISOString(),
     });
 
