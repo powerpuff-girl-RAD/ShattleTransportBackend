@@ -92,8 +92,8 @@ const resolveSerial = ({ qrPayload, tokenSerial }) => {
     //    checks (token status, boarding scan, route) still decide the result.
     try {
         const data = JSON.parse(text);
-        if (data && data.tokenSerial) {
-            return { serial: String(data.tokenSerial).trim().toUpperCase() };
+        if (data && (data.bookingToken || data.tokenSerial)) {
+            return { serial: String(data.bookingToken || data.tokenSerial).trim().toUpperCase() };
         }
     } catch {
         // not JSON
