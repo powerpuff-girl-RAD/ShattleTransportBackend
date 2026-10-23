@@ -9,7 +9,9 @@ const errorHandler = (err, req, res, next) => {
         success: false,
         message:
             err.message ||
-            "Internal server error"
+            "Internal server error",
+        // Machine-readable reason (e.g. "WRONG_ROUTE") when the service sets a string code
+        ...(typeof err.code === "string" ? { code: err.code } : {})
     });
 };
 

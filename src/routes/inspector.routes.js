@@ -12,7 +12,12 @@ router.use(authenticateToken, requireRole("Inspector"));
 router.get("/dashboard", inspectorController.getDashboard);
 router.post("/shift/start", inspectorController.startShift);
 router.post("/shift/end", inspectorController.endShift);
+router.post("/shifts/:id/settle", inspectorController.settleShift);
 router.post("/inspect", inspectorController.inspect);
+
+// Booking QR: Scan changes state (tap-in / tap-out), Validate is read-only
+router.post("/scan", inspectorController.scan);
+router.post("/validate", inspectorController.validate);
 
 router.get("/inspections", inspectorController.listInspections);
 router.get("/inspections/:id", inspectorController.getInspection);

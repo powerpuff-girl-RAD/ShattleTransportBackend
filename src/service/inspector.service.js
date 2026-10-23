@@ -1,11 +1,11 @@
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
 
-const env = require("../config/env");
 const inspectorRepository = require("../repository/inspector.repository");
 const tokenRepository = require("../repository/token.repository");
 const journeyRepository = require("../repository/journey.repository");
 const { runChecks } = require("./inspection.checks");
+const { resolveSerial } = require("./qrSerial");
+const ticketingService = require("./ticketing.service");
 const { badRequest, notFound, conflict } = require("../utils/errors");
 
 
@@ -17,6 +17,7 @@ const VIOLATION_TYPES = [
     "Insufficient Credit",
     "Invalid Token",
     "Invalid Journey",
+    "Missed Tap-Out",   // recorded automatically by shift-end settlement
     "Other"
 ];
 
@@ -60,53 +61,6 @@ const daysSince = (from) => {
     }
     return days;
 };
-
-// QR codes carry a signed JWT: wallet tokens (token.service generateQR) use
-// `serial`, booking tokens (booking.service activateBookingToken) use `tokenSerial`.
-// Smartcards / barcodes are typed in by the inspector as a plain serial.
-const resolveSerial = ({ qrPayload, tokenSerial }) => {
-
-    if (tokenSerial) {
-        return { serial: String(tokenSerial).trim().toUpperCase() };
-    }
-
-    const text = String(qrPayload).trim();
-
-    // 1. Signed QR (wallet token or activated booking) — the signature proves the app made it
-    try {
-        const decoded = jwt.verify(text, env.jwt.qrSecret);
-        const serial = decoded.serial || decoded.tokenSerial;
-        return serial ? { serial } : { serial: null, qrError: "This QR code is not a passenger token" };
-    } catch (error) {
-        if (error.name === "TokenExpiredError") {
-            return { serial: null, qrError: "This QR code has expired. Ask the passenger to refresh it." };
-        }
-        if (error.name === "JsonWebTokenError" && text.split(".").length === 3) {
-            return { serial: null, qrError: "This QR code was not issued by Shattle Transport" };
-        }
-        // Not a JWT at all: try the other formats below
-    }
-
-    // 2. Booking QR shown before the booking is activated: plain JSON with tokenSerial.
-    //    It isn't signed, so it is trusted no more than a typed serial — the database
-    //    checks (token status, boarding scan, route) still decide the result.
-    try {
-        const data = JSON.parse(text);
-        if (data && data.tokenSerial) {
-            return { serial: String(data.tokenSerial).trim().toUpperCase() };
-        }
-    } catch {
-        // not JSON
-    }
-
-    // 3. A bare serial (e.g. a printed barcode ticket that says "TK-2625")
-    if (/^TK-[A-Z0-9-]+$/i.test(text)) {
-        return { serial: text.toUpperCase() };
-    }
-
-    return { serial: null, qrError: "This QR code is not a Shattle passenger token" };
-};
-
 
 // ─── Mappers: database rows (PascalCase) → API shape (camelCase) ─────────
 // Information hiding (Lecture 7): the mobile app never sees raw DB field names
@@ -251,9 +205,18 @@ const endShift = async (inspectorId) => {
 
     await inspectorRepository.closeShift(openShift.Id);
 
+    // Shift-end settlement: charge every passenger left tapped in on this shift.
+    // If it fails, the shift stays ended and POST /shifts/:id/settle can retry it.
+    let settlement = null;
+    try {
+        settlement = await ticketingService.settleShift(openShift.Id, { inspectorId });
+    } catch (error) {
+        console.error(`Settlement for shift ${openShift.Id} failed:`, error.message);
+    }
+
     const schedule = await inspectorRepository.findScheduleForDate(inspectorId, todayString());
 
-    return toShift(schedule, null);
+    return { shift: toShift(schedule, null), settlement };
 };
 
 // Inspect one passenger token. Every inspection is saved, valid or not:

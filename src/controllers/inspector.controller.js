@@ -1,4 +1,5 @@
 const inspectorService = require("../service/inspector.service");
+const ticketingService = require("../service/ticketing.service");
 
 const getDashboard = async (req, res, next) => {
     try {
@@ -20,8 +21,40 @@ const startShift = async (req, res, next) => {
 
 const endShift = async (req, res, next) => {
     try {
-        const shift = await inspectorService.endShift(req.user.id);
-        res.status(200).json({ success: true, message: "Shift ended", shift });
+        const { shift, settlement } = await inspectorService.endShift(req.user.id);
+        res.status(200).json({ success: true, message: "Shift ended", shift, settlement });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /scan — first scan taps in, second taps out (charges the booked fare), third is rejected
+const scan = async (req, res, next) => {
+    try {
+        const { qrPayload, tokenSerial } = req.body;
+        const result = await ticketingService.scan(req.user.id, { qrPayload, tokenSerial });
+        res.status(result.action === "TAP_IN" ? 201 : 200).json({ success: true, ...result });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /validate — read-only VALID / INVALID for the current shift's route
+const validate = async (req, res, next) => {
+    try {
+        const { qrPayload, tokenSerial } = req.body;
+        const result = await ticketingService.validate(req.user.id, { qrPayload, tokenSerial });
+        res.status(200).json({ success: true, ...result });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /shifts/:id/settle — re-run settlement for one of your ended shifts (safe to repeat)
+const settleShift = async (req, res, next) => {
+    try {
+        const settlement = await ticketingService.settleShift(req.params.id, { inspectorId: req.user.id });
+        res.status(200).json({ success: true, settlement });
     } catch (error) {
         next(error);
     }
@@ -117,6 +150,9 @@ module.exports = {
     getDashboard,
     startShift,
     endShift,
+    scan,
+    validate,
+    settleShift,
     inspect,
     listInspections,
     getInspection,

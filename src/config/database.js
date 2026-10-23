@@ -28,6 +28,12 @@ const ensureIndexes = async (database) => {
         database.collection("passengerTopUps").createIndex({ UserId: 1, CreatedAt: -1 }),
         database.collection("journeys").createIndex({ Id: 1 }, { unique: true }),
         database.collection("journeys").createIndex({ UserId: 1, Status: 1 }),
+        // One journey per booking: two simultaneous first scans can't both tap in
+        database.collection("journeys").createIndex(
+            { BookingId: 1 },
+            { unique: true, partialFilterExpression: { BookingId: { $type: "number" } } }
+        ),
+        database.collection("journeys").createIndex({ ShiftId: 1, Status: 1 }),
         database.collection("notifications").createIndex({ Id: 1 }, { unique: true }),
         database.collection("notifications").createIndex({ UserId: 1, CreatedAt: -1 }),
         database.collection("bookings").createIndex({ Id: 1 }, { unique: true }),
@@ -99,6 +105,24 @@ const nextId = async (sequenceName) => {
 // Strips Mongo's internal _id so rows look like the previous SQL rows
 const NO_ID = { projection: { _id: 0 } };
 
+// Runs work(session) in one MongoDB transaction: every write that is passed the
+// session commits together or not at all. Retries on transient errors.
+const withTransaction = async (work) => {
+    await getDb();
+
+    const session = client.startSession();
+
+    try {
+        let result;
+        await session.withTransaction(async () => {
+            result = await work(session);
+        });
+        return result;
+    } finally {
+        await session.endSession();
+    }
+};
+
 const close = async () => {
     if (client) {
         await client.close();
@@ -112,6 +136,7 @@ module.exports = {
     getDb,
     getCollection,
     nextId,
+    withTransaction,
     close,
     NO_ID
 };
